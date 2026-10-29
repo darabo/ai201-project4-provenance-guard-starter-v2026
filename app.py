@@ -30,6 +30,8 @@ from flask import Flask, jsonify, request
 
 import audit
 import config
+import detector
+import stylometry
 
 app = Flask(__name__)
 
@@ -200,51 +202,110 @@ def submit():
     a malformed input is one of the most common real failures there is.
     """
 
-    payload = request.get_json(silent=True) or {}
-    text = payload.get("text")
-    creator_id = payload.get("creator_id", "unknown")
+    # get_json(silent=True) returns None instead of raising when the body
+    # isn't valid JSON, so a garbage body falls into the checks below rather
+    # than crashing the route.
+    payload = request.get_json(silent=True)
 
-    #step 3 - one real signal that we first test from the terminal
-    # python detector.py "some text"
-    import detector
-    model_score = detector.model_signal(text)
+    # Step 2: refuse bad input BEFORE any signal runs. Every check lives in
+    # _check_submission so this route reads top to bottom.
+    problem = _check_submission(payload)
+    if problem:
+        reason, message = problem
+        # A refused request still leaves a trace in the log (criterion 5).
+        # creator_id may be missing or the body may not even be an object, so
+        # fall back to "unknown" rather than calling .get on a non-dict.
+        creator = payload.get("creator_id") if isinstance(payload, dict) else None
+        audit.log_rejection(
+            creator_id=creator if isinstance(creator, str) and creator.strip() else "unknown",
+            reason=reason,
+            message=message,
+        )
+        return jsonify({"error": "bad_request", "message": message}), 400
 
-    # Step 2 - JSON goes in: pull text and creator_id out of the body
-    if not isinstance(text, str) or not text.strip():
-        return jsonify({"error": "bad_request", "message": "Send JSON with a non-empty \"text\"."}), 400
+    text = payload["text"]
+    creator_id = payload["creator_id"].strip()
 
-    # Step 4 - log the decision. The content_id is what /appeal needs later.
+    # Step 3: signal one. The first call loads gpt2 into memory (10+ seconds);
+    # after that it stays loaded and each call takes a second or two.
+    try:
+        model_score = detector.model_signal(text)
+    except detector.DetectorUnavailable as exc:
+        # The model isn't downloaded or can't load. That's the service's
+        # fault, not the writer's, so it's a 503 ("service unavailable").
+        audit.log_rejection(creator_id=creator_id, reason="detector_unavailable", message=str(exc))
+        return jsonify({"error": "detector_unavailable", "message": str(exc)}), 503
+
+    # PLACEHOLDERS until Milestones 4 and 5: confidence is signal one alone,
+    # and there's no real label yet.
+    guess = "unsure"
+    confidence = model_score
+    label = "Not built yet: labels arrive in Milestone 5."
+
+    # Step 4: log the decision. The content_id is the handle /appeal needs
+    # later. uuid4().hex is 32 random hex characters; 12 of them give about
+    # 2.8e14 possible ids, so two submissions colliding is not a real worry.
     content_id = f"c_{uuid.uuid4().hex[:12]}"
     audit.log_decision(
         content_id=content_id,
         creator_id=creator_id,
+        guess=guess,
         model_score=model_score,
+        combined_score=confidence,
+        label=label,
         status="decided",
     )
 
-    #step 1 - the route answers, Hardcoded without any logic yet.
     return jsonify({
-        "content_id": "hardcoded",
+        "content_id": content_id,
         "creator_id": creator_id,
-        "guess": "unsure",
-        "confidence": model_score,
-        "label": "not build yet",
-        "model_score": model_score ,
-        "style_score": None,
+        "guess": guess,
+        "confidence": confidence,
+        "label": label,
+        "model_score": model_score,
+        "style_score": None,  # signal two arrives in Milestone 4
+        "status": "decided",
     }), 200
 
-    
 
+def _check_submission(payload) -> tuple[str, str] | None:
+    """
+    Decide whether a /submit body is something we can score.
 
-    # TODO: delete this and build the route.
-    # return jsonify({
-    #     "error": "not_implemented",
-    #     "message": "POST /submit isn't built yet — see the TODO in app.py.",
-    #     "you_sent": {
-    #         "text_length": len(payload.get("text", "")),
-    #         "creator_id": payload.get("creator_id"),
-    #     },
-    # }), 501
+    Returns None when the body is fine, or a (reason, message) pair when it
+    isn't: `reason` is a short code for the audit log, `message` is the
+    sentence sent back to the caller. These are the seven cases criterion 5
+    names, checked in the order a caller would most likely trip them.
+    """
+    # A JSON list or string parses fine but has no fields to read.
+    if not isinstance(payload, dict):
+        return "not_an_object", 'Send a JSON object like {"text": "...", "creator_id": "..."}.'
+
+    text = payload.get("text")
+    # Covers a missing field (None), an explicit null, and a non-string value.
+    if not isinstance(text, str):
+        return "text_missing", 'The "text" field is required and must be a string.'
+    if not text.strip():
+        return "text_empty", 'The "text" field is empty.'
+
+    # Character limit first: counting words on a huge paste is wasted work.
+    if len(text) > config.MAX_TEXT_CHARS:
+        return "text_too_long", (
+            f"The text is {len(text):,} characters; the limit is "
+            f"{config.MAX_TEXT_CHARS:,}."
+        )
+    word_count = len(stylometry.words(text))
+    if word_count < config.MIN_WORDS:
+        return "text_too_short", (
+            f"The text has {word_count} words; at least {config.MIN_WORDS} are "
+            f"needed to judge it fairly."
+        )
+
+    creator_id = payload.get("creator_id")
+    if not isinstance(creator_id, str) or not creator_id.strip():
+        return "creator_missing", 'The "creator_id" field is required.'
+
+    return None
 
 
 @app.post("/appeal")

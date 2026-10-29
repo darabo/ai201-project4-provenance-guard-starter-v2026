@@ -47,6 +47,22 @@ DETECTOR_MODEL = os.getenv("AI201_DETECTOR_MODEL", "gpt2")
 DETECTOR_MAX_TOKENS = 400
 
 
+# ─── Input limits (criterion 5) ──────────────────────────────────────────────
+# What /submit refuses with a 400 before any signal runs. Both numbers come
+# from criterion 5 in criteria.md.
+#
+# MIN_WORDS: under about 40 words (two or three sentences) the signals have
+# too little to measure. gpt2 needs enough tokens for perplexity to settle,
+# and a sentence-length spread needs at least two sentences.
+#
+# MAX_TEXT_CHARS: 10,000 characters is roughly 1,700 words, enough for any
+# essay or story. gpt2 only reads the first DETECTOR_MAX_TOKENS anyway, so a
+# bigger paste would only slow the service down.
+
+MIN_WORDS = 40
+MAX_TEXT_CHARS = 10_000
+
+
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
 # How much each signal counts toward the combined score.
 #
