@@ -112,12 +112,33 @@ def score_to_label(score: float) -> tuple[str, str]:
     think if they got it on their own work. That question is the whole
     milestone.
     """
-    # TODO: replace this — thresholds are in config.py
+    # Thresholds live in config.py. The boundaries are inclusive at the ends:
+    # exactly 0.65 is "ai" and exactly 0.35 is "human", so every score from
+    # 0.0 to 1.0 lands in exactly one band and no label has a gap.
     if score >= config.AI_THRESHOLD:
-        return "ai", "PLACEHOLDER — write the high-confidence AI label."
+        return "ai", LABEL_TEXT["ai"]
     if score <= config.HUMAN_THRESHOLD:
-        return "human", "PLACEHOLDER — write the high-confidence human label."
-    return "unsure", "PLACEHOLDER — write the unsure label."
+        return "human", LABEL_TEXT["human"]
+    return "unsure", LABEL_TEXT["unsure"]
+
+
+# The exact sentences a reader sees, keyed by guess. Kept in one place so the
+# README's Label Variants table can be checked against the code.
+LABEL_TEXT = {
+    "human": (
+        "We think this was written by a person. Our check looks at writing "
+        "patterns, so it can be wrong, but nothing here suggested an AI tool."
+    ),
+    "unsure": (
+        "We couldn't tell either way whether this was written by a person or "
+        "an AI tool, so we're not making a call on it."
+    ),
+    "ai": (
+        "This reads very much like text written by an AI tool. Our check can "
+        "be wrong. If you wrote this yourself, you can ask for a person to "
+        "review it."
+    ),
+}
 
 
 def label_ranges() -> list[tuple[str, str]]:

@@ -62,6 +62,10 @@ DETECTOR_MAX_TOKENS = 400
 MIN_WORDS = 40
 MAX_TEXT_CHARS = 10_000
 
+# The longest appeal reasoning /appeal accepts. 5,000 characters is around 850
+# words: room for a real explanation, but not a second essay.
+APPEAL_MAX_CHARS = 5_000
+
 
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
 # How much each signal counts toward the combined score.

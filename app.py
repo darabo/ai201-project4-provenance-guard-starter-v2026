@@ -247,9 +247,8 @@ def submit():
     # in scoring.combine_signals and above the weights in config.py.
     confidence = scoring.combine_signals(model_score, style_score, marker_score)
 
-    # PLACEHOLDER until Milestone 5: no real label yet.
-    guess = "unsure"
-    label = "Not built yet: labels arrive in Milestone 5."
+    # Step 7: the number becomes words a writer can read.
+    guess, label = scoring.score_to_label(confidence)
 
     # Step 4: log the decision. The content_id is the handle /appeal needs
     # later. uuid4().hex is 32 random hex characters; 12 of them give about
@@ -342,14 +341,63 @@ def appeal():
     to the person on the other end. It's the only thing standing between a
     wrong accusation and nothing at all.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
 
-    # TODO: delete this and build the route.
+    # Step 1: both fields present and usable. Same idea as _check_submission:
+    # a body that isn't a JSON object has no fields at all.
+    if not isinstance(payload, dict):
+        payload = {}
+    content_id = payload.get("content_id")
+    reasoning = payload.get("reasoning")
+    if not isinstance(content_id, str) or not content_id.strip():
+        return _refuse_appeal("appeal_missing_id", 'The "content_id" field is required.', 400)
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        return _refuse_appeal("appeal_missing_reasoning",
+                              'The "reasoning" field is required: tell us why you think the result is wrong.', 400)
+    if len(reasoning) > config.APPEAL_MAX_CHARS:
+        return _refuse_appeal("appeal_too_long",
+                              f"Please keep the reasoning under {config.APPEAL_MAX_CHARS:,} characters.", 400)
+    content_id = content_id.strip()
+
+    # Step 2: the content_id must belong to a real decision. entries_for
+    # returns every log line for this id; the original decision is the one
+    # without an "event" field (appeals and rejections carry one).
+    decisions = [e for e in audit.entries_for(content_id) if "event" not in e]
+    if not decisions:
+        # 404 = "no such thing". Criterion 4: an unknown id adds no appeal entry.
+        return _refuse_appeal("appeal_unknown_id",
+                              f"No submission with content_id {content_id!r} exists.", 404,
+                              error="not_found", content_id=content_id)
+
+    # Step 3: record it. log_appeal APPENDS a new line with status
+    # under_review; the original decision line stays untouched, so the log
+    # shows both what was decided and that it was challenged.
+    entry = audit.log_appeal(
+        content_id=content_id,
+        creator_id=decisions[0]["creator_id"],
+        reasoning=reasoning.strip(),
+    )
+
+    # Step 4: confirm to the writer. No automatic re-check happens here.
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /appeal isn't built yet — see the TODO in app.py.",
-        "you_sent": payload,
-    }), 501
+        "content_id": content_id,
+        "status": "under_review",
+        "message": ("Thank you. Your appeal has been recorded and this piece is now "
+                    "marked as under review. A person will read your explanation "
+                    "alongside our original result."),
+        "appealed_at": entry["timestamp"],
+    }), 200
+
+
+def _refuse_appeal(reason: str, message: str, status: int, error: str = "bad_request", **extra):
+    """
+    Turn away a bad appeal, leaving a `rejected` trace in the audit log.
+
+    The log entry says "rejected", never "appeal", so a refused appeal can't be
+    mistaken for a recorded one when someone reads the log later.
+    """
+    audit.log_rejection(creator_id="unknown", reason=reason, message=message, **extra)
+    return jsonify({"error": error, "message": message}), status
 
 
 # ── Already works ─────────────────────────────────────────────────────────────

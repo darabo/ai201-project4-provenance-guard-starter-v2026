@@ -265,15 +265,25 @@ and dashes correctly, and the average lands at 0.275, human.
 
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| high-confidence human | 0.00 to 0.35 (0.35 itself is human) | We think this was written by a person. Our check looks at writing patterns, so it can be wrong, but nothing here suggested an AI tool. |
+| unsure | above 0.35 and below 0.65 | We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it. |
+| high-confidence AI | 0.65 to 1.00 (0.65 itself is AI) | This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it. |
+
+The text lives in `scoring.py` (`LABEL_TEXT`), chosen by
+`scoring.py::score_to_label`. Each label was reached with a real submission:
+`samples/clearly_human.json` scored 0.2745 (human), `samples/borderline.json`
+0.4441 (unsure), and `samples/clearly_ai.json` 0.8838 (AI).
 
 **Why I worded the "unsure" one this way:**
 <!-- It's the hardest of the three. It has to admit uncertainty without
      sounding like an accusation, because the person reading it may well have
      written every word themselves. -->
 
+Most text that lands in the unsure band is plain or edited writing, and gpt2
+is known to score plain human writing as AI-like, so the person reading this
+label most likely wrote the piece. The label must not read as a soft
+accusation, so it says the system made no call at all instead of hinting
+which way it leans.
 
 
 ---
