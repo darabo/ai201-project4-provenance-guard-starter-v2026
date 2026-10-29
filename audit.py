@@ -112,6 +112,24 @@ def log_rejection(creator_id: str, reason: str, **extra) -> dict:
     })
 
 
+def log_event(event: str, creator_id: str, status: str, **extra) -> dict:
+    """
+    Record anything that isn't a decision, appeal or rejection.
+
+    Added for the verified-human stretch feature: issuing a writing challenge
+    (`event="verify_challenge"`) and granting the credential
+    (`event="verified"`). Keeping these in the same append-only log means the
+    credential has the same paper trail as every decision.
+    """
+    return _append({
+        "timestamp": _now(),
+        "creator_id": creator_id,
+        "event": event,
+        "status": status,
+        **extra,
+    })
+
+
 def _append(entry: dict) -> dict:
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     line = json.dumps(entry, ensure_ascii=False)

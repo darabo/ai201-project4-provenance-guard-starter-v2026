@@ -20,6 +20,9 @@ Routes:
     POST /ping        the worked example. Already works. Don't edit it
     POST /submit      ← YOU BUILD THIS (Milestone 3, 4, 5)
     POST /appeal      ← YOU BUILD THIS (Milestone 5)
+    GET  /content/<id>        one item's current status (stretch)
+    POST /verify/challenge    get a writing prompt to earn the verified badge (stretch)
+    POST /verify              answer it and earn the badge (stretch)
     GET  /log         the audit log. Already works
     GET  /health      is the service up, and is the model loaded
 """
@@ -30,6 +33,7 @@ from flask import Flask, jsonify, request
 
 import audit
 import config
+import credentials
 import detector
 import markers
 import scoring
@@ -228,42 +232,37 @@ def submit():
     text = payload["text"]
     creator_id = payload["creator_id"].strip()
 
-    # Step 3: signal one. The first call loads gpt2 into memory (10+ seconds);
-    # after that it stays loaded and each call takes a second or two.
+    # Steps 3 to 6: three signals, one combined score, one label. See
+    # _score_text below; /verify uses the same helper so both routes judge
+    # text identically.
     try:
-        model_score = detector.model_signal(text)
+        result = _score_text(text)
     except detector.DetectorUnavailable as exc:
         # The model isn't downloaded or can't load. That's the service's
         # fault, not the writer's, so it's a 503 ("service unavailable").
         audit.log_rejection(creator_id=creator_id, reason="detector_unavailable", message=str(exc))
         return jsonify({"error": "detector_unavailable", "message": str(exc)}), 503
 
-    # Step 5: signals two and three. Both are plain Python string work, so
-    # they take milliseconds next to gpt2's second or two.
-    style_score = stylometry.style_signal(text)
-    marker_score = markers.marker_signal(text)
+    # Step 7 (stretch): does this writer hold the verified-writer credential?
+    # It's shown beside the label and never changes the score.
+    credential = credentials.credential_for(creator_id)
 
-    # Step 6: one number from three. The rule and its numbers are explained
-    # in scoring.combine_signals and above the weights in config.py.
-    confidence = scoring.combine_signals(model_score, style_score, marker_score)
-
-    # Step 7: the number becomes words a writer can read.
-    guess, label = scoring.score_to_label(confidence)
-
-    # Step 4: log the decision. The content_id is the handle /appeal needs
-    # later. uuid4().hex is 32 random hex characters; 12 of them give about
-    # 2.8e14 possible ids, so two submissions colliding is not a real worry.
+    # Step 8: log the decision. The content_id is the handle /appeal and
+    # /content/<id> need later. uuid4().hex is 32 random hex characters; 12 of
+    # them give about 2.8e14 possible ids, so a collision is not a real worry.
     content_id = f"c_{uuid.uuid4().hex[:12]}"
     audit.log_decision(
         content_id=content_id,
         creator_id=creator_id,
-        guess=guess,
-        model_score=model_score,
-        style_score=style_score,
-        combined_score=confidence,
-        label=label,
+        guess=result["guess"],
+        model_score=result["model_score"],
+        style_score=result["style_score"],
+        combined_score=result["confidence"],
+        label=result["label"],
         status="decided",
-        marker_score=marker_score,  # not one of the nine standard fields, so it rides in **extra
+        # Not among the nine standard fields, so these ride in **extra.
+        marker_score=result["marker_score"],
+        verified_human=credential is not None,
     )
 
     # All three signal scores go in the response, not just the log: unit 8's
@@ -271,14 +270,43 @@ def submit():
     return jsonify({
         "content_id": content_id,
         "creator_id": creator_id,
+        **result,
+        "verified_human": credential is not None,
+        "verified_badge": credentials.badge_text(credential),
+        "status": "decided",
+    }), 200
+
+
+def _score_text(text: str) -> dict:
+    """
+    Run all three signals on `text`, combine them, and label the result.
+
+    Returns a dict with guess, confidence, label, model_score, style_score and
+    marker_score. Raises detector.DetectorUnavailable if gpt2 can't load.
+    """
+    # Signal one. The first call loads gpt2 into memory (10+ seconds); after
+    # that it stays loaded and each call takes a second or two.
+    model_score = detector.model_signal(text)
+
+    # Signals two and three are plain Python string work: milliseconds.
+    style_score = stylometry.style_signal(text)
+    marker_score = markers.marker_signal(text)
+
+    # One number from three. The rule and its numbers are explained in
+    # scoring.combine_signals and above the weights in config.py.
+    confidence = scoring.combine_signals(model_score, style_score, marker_score)
+
+    # The number becomes words a writer can read.
+    guess, label = scoring.score_to_label(confidence)
+
+    return {
         "guess": guess,
         "confidence": confidence,
         "label": label,
         "model_score": model_score,
         "style_score": style_score,
         "marker_score": marker_score,
-        "status": "decided",
-    }), 200
+    }
 
 
 def _check_submission(payload) -> tuple[str, str] | None:
@@ -398,6 +426,124 @@ def _refuse_appeal(reason: str, message: str, status: int, error: str = "bad_req
     """
     audit.log_rejection(creator_id="unknown", reason=reason, message=message, **extra)
     return jsonify({"error": error, "message": message}), status
+
+
+# ── Stretch features ──────────────────────────────────────────────────────────
+
+@app.get("/content/<content_id>")
+def get_content(content_id):
+    """
+    One item's current status, rebuilt from the audit log. (Stretch.)
+
+        curl http://127.0.0.1:5000/content/c_3de98cf58d2c
+
+    The log is append-only, so "current status" means: start from the
+    original decision, then let each later appeal move the status on. The
+    `<content_id>` in the route is a Flask URL variable: whatever sits in that
+    part of the path arrives as the function's argument.
+    """
+    entries = audit.entries_for(content_id)
+    # The decision is the entry with no "event" field; appeals and rejections
+    # carry one. A rejected appeal against a made-up id also lands in
+    # entries_for, which is why we can't just test "any entries at all".
+    decisions = [e for e in entries if "event" not in e]
+    if not decisions:
+        return jsonify({"error": "not_found",
+                        "message": f"No submission with content_id {content_id!r} exists."}), 404
+
+    decision = decisions[0]
+    appeals = [e for e in entries if e.get("event") == "appeal"]
+    # The newest status wins: under_review once any appeal exists.
+    status = appeals[-1]["status"] if appeals else decision["status"]
+
+    return jsonify({
+        "content_id": content_id,
+        "creator_id": decision["creator_id"],
+        "status": status,
+        "guess": decision["guess"],
+        "confidence": decision["combined_score"],
+        "label": decision["label"],
+        "model_score": decision["model_score"],
+        "style_score": decision["style_score"],
+        "marker_score": decision.get("marker_score"),
+        "verified_human": decision.get("verified_human", False),
+        "submitted_at": decision["timestamp"],
+        "appeals": [{"reasoning": a["reasoning"], "appealed_at": a["timestamp"]} for a in appeals],
+    })
+
+
+@app.post("/verify/challenge")
+def verify_challenge():
+    """
+    Step one of the verified-writer path: hand out a writing prompt. (Stretch.)
+
+    Expects {"creator_id": "..."}; returns the prompt, a challenge_id, and
+    when it expires. See credentials.py for how the whole path works.
+    """
+    payload = request.get_json(silent=True)
+    creator_id = payload.get("creator_id") if isinstance(payload, dict) else None
+    if not isinstance(creator_id, str) or not creator_id.strip():
+        return jsonify({"error": "bad_request", "message": 'The "creator_id" field is required.'}), 400
+
+    challenge = credentials.issue_challenge(creator_id.strip())
+    return jsonify({
+        **challenge,
+        "instructions": (f"Write at least {challenge['min_words']} words responding to the "
+                         f"prompt, in your own words, then send them to POST /verify with "
+                         f"this challenge_id before it expires."),
+    })
+
+
+@app.post("/verify")
+def verify():
+    """
+    Step two: check the writer's response and grant the credential. (Stretch.)
+
+    Expects {"creator_id": "...", "challenge_id": "...", "text": "..."}.
+    The text is scored by the same _score_text as /submit; a high-confidence
+    AI result is refused. Anything else earns the credential, including
+    "unsure", because the unsure band is where plain human writing lands and
+    refusing it would lock out exactly the writers this path is meant to help.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        payload = {}
+    creator_id = payload.get("creator_id")
+    challenge_id = payload.get("challenge_id")
+    text = payload.get("text")
+    if not all(isinstance(v, str) and v.strip() for v in (creator_id, challenge_id, text)):
+        return jsonify({"error": "bad_request",
+                        "message": 'Send "creator_id", "challenge_id" and "text".'}), 400
+    creator_id = creator_id.strip()
+
+    # Checks that don't need the model: right writer, in time, long enough.
+    challenge = credentials.find_challenge(challenge_id.strip())
+    problem = credentials.challenge_problem(challenge, creator_id, len(stylometry.words(text)))
+    if problem:
+        audit.log_rejection(creator_id=creator_id, reason="verify_refused",
+                            message=problem, challenge_id=challenge_id)
+        return jsonify({"verified": False, "message": problem}), 400
+
+    try:
+        result = _score_text(text)
+    except detector.DetectorUnavailable as exc:
+        return jsonify({"error": "detector_unavailable", "message": str(exc)}), 503
+
+    if result["guess"] == "ai":
+        message = ("This response read as AI-generated, so we can't verify you from it. "
+                   "You can ask for a new prompt and try again in your own words.")
+        audit.log_rejection(creator_id=creator_id, reason="verify_scored_ai", message=message,
+                            challenge_id=challenge_id, combined_score=result["confidence"])
+        return jsonify({"verified": False, "message": message, **result}), 400
+
+    credential = credentials.grant(creator_id, challenge["challenge_id"], result)
+    return jsonify({
+        "verified": True,
+        "creator_id": creator_id,
+        "verified_at": credential["timestamp"],
+        "badge": credentials.badge_text(credential),
+        "message": "You're verified. Your future submissions will show this badge beside their label.",
+    })
 
 
 # ── Already works ─────────────────────────────────────────────────────────────
