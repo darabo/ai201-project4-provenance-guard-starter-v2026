@@ -96,36 +96,35 @@ submission (details under Stretch Features: What I Built).
 
 **`POST /submit`**
 
-| Direction | Field | Type | Notes |
-|---|---|---|---|
-| in | `text` | string | Required. Not empty, between the word and character limits in `config.py` |
-| in | `creator_id` | string | Required. Who wrote it; appeals and the verified credential hang off it |
-| out | `content_id` | string | `c_` plus 12 hex characters. The handle for `/appeal` and `/content/<id>` |
-| out | `creator_id` | string | Echoed back |
-| out | `guess` | string | `"ai"`, `"human"` or `"unsure"` |
-| out | `confidence` | float | The combined score, 0.0 (confidently human) to 1.0 (confidently AI) |
-| out | `label` | string | The full sentence a reader sees |
-| out | `model_score`, `style_score`, `marker_score` | float | Each signal on its own, 0 to 1, higher means more AI-like |
-| out | `verified_human` | bool | Whether this writer holds the verified credential |
-| out | `verified_badge` | string or null | The badge line shown beside the label for a verified writer; `null` otherwise |
-| out | `status` | string | `"decided"` |
+| Direction | Field                                        | Type           | Notes                                                                         |
+| --------- | -------------------------------------------- | -------------- | ----------------------------------------------------------------------------- |
+| in        | `text`                                       | string         | Required. Not empty, between the word and character limits in `config.py`     |
+| in        | `creator_id`                                 | string         | Required. Who wrote it; appeals and the verified credential hang off it       |
+| out       | `content_id`                                 | string         | `c_` plus 12 hex characters. The handle for `/appeal` and `/content/<id>`     |
+| out       | `creator_id`                                 | string         | Echoed back                                                                   |
+| out       | `guess`                                      | string         | `"ai"`, `"human"` or `"unsure"`                                               |
+| out       | `confidence`                                 | float          | The combined score, 0.0 (confidently human) to 1.0 (confidently AI)           |
+| out       | `label`                                      | string         | The full sentence a reader sees                                               |
+| out       | `model_score`, `style_score`, `marker_score` | float          | Each signal on its own, 0 to 1, higher means more AI-like                     |
+| out       | `verified_human`                             | bool           | Whether this writer holds the verified credential                             |
+| out       | `verified_badge`                             | string or null | The badge line shown beside the label for a verified writer; `null` otherwise |
+| out       | `status`                                     | string         | `"decided"`                                                                   |
 
 Bad input returns 400 with `{"error": "bad_request", "message": "..."}`.
 
 **`POST /appeal`**
 
-| Direction | Field | Type | Notes |
-|---|---|---|---|
-| in | `content_id` | string | Required. Must exist in the audit log |
-| in | `reasoning` | string | Required, not empty. The writer's explanation |
-| out | `content_id` | string | Echoed back |
-| out | `status` | string | `"under_review"` |
-| out | `message` | string | A confirmation sentence for the writer |
-| out | `appealed_at` | string | UTC timestamp of the appeal |
+| Direction | Field         | Type   | Notes                                         |
+| --------- | ------------- | ------ | --------------------------------------------- |
+| in        | `content_id`  | string | Required. Must exist in the audit log         |
+| in        | `reasoning`   | string | Required, not empty. The writer's explanation |
+| out       | `content_id`  | string | Echoed back                                   |
+| out       | `status`      | string | `"under_review"`                              |
+| out       | `message`     | string | A confirmation sentence for the writer        |
+| out       | `appealed_at` | string | UTC timestamp of the appeal                   |
 
 Missing fields return 400. A `content_id` that was never issued returns 404
 with `{"error": "not_found"}`.
-
 
 ---
 
@@ -238,11 +237,11 @@ three samples is thin evidence for that.
 
 **All three signals on the calibration samples:**
 
-| Sample | model | style | marker | combined |
-|---|---|---|---|---|
-| `samples/clearly_ai.json` | 0.754 | 0.914 | 0.994 | 0.884 |
-| `samples/borderline.json` (lightly edited AI) | 0.349 | 0.539 | 0.000 | 0.444 |
-| `samples/clearly_human.json` | 0.445 | 0.104 | 0.000 | 0.275 |
+| Sample                                        | model | style | marker | combined |
+| --------------------------------------------- | ----- | ----- | ------ | -------- |
+| `samples/clearly_ai.json`                     | 0.754 | 0.914 | 0.994  | 0.884    |
+| `samples/borderline.json` (lightly edited AI) | 0.349 | 0.539 | 0.000  | 0.444    |
+| `samples/clearly_human.json`                  | 0.445 | 0.104 | 0.000  | 0.275    |
 
 **A case where my two signals split, and what my rule does with it:**
 `samples/borderline.json` is the AI paragraph rewritten by hand: stock
@@ -270,13 +269,13 @@ directions to a friend", and my system labeled it high-confidence AI:
 > until you hit the Starbucks and take a left. The building will be right in
 > front of you. It's a white building with a black awning.
 
-| | my directions | `clearly_ai.json` |
-|---|---|---|
-| perplexity | 16.3 | 22.3 |
-| model | 0.835 | 0.754 |
-| style | 0.723 | 0.914 |
-| marker | 0.000 | 0.994 |
-| combined | 0.779 (AI) | 0.884 (AI) |
+|            | my directions | `clearly_ai.json` |
+| ---------- | ------------- | ----------------- |
+| perplexity | 16.3          | 22.3              |
+| model      | 0.835         | 0.754             |
+| style      | 0.723         | 0.914             |
+| marker     | 0.000         | 0.994             |
+| combined   | 0.779 (AI)    | 0.884 (AI)        |
 
 gpt2 found my directions more predictable than the AI sample, because
 directions are made of stock moves ("go until you hit", "take a left"). The
@@ -298,8 +297,6 @@ did remove the directions prompt from the verified-writer path
 (`credentials.py::PROMPTS`), because a prompt that invites formulaic writing
 sets honest writers up to fail.
 
-
-
 ---
 
 ## Label Variants
@@ -309,11 +306,11 @@ sets honest writers up to fail.
 
      Write them for someone who has never heard the word "threshold". -->
 
-| Label | Score range | The exact text a reader sees |
-|---|---|---|
-| high-confidence human | 0.00 to 0.35 (0.35 itself is human) | We think this was written by a person. Our check looks at writing patterns, so it can be wrong, but nothing here suggested an AI tool. |
-| unsure | above 0.35 and below 0.65 | We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it. |
-| high-confidence AI | 0.65 to 1.00 (0.65 itself is AI) | This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it. |
+| Label                 | Score range                         | The exact text a reader sees                                                                                                                     |
+| --------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| high-confidence human | 0.00 to 0.35 (0.35 itself is human) | We think this was written by a person. Our check looks at writing patterns, so it can be wrong, but nothing here suggested an AI tool.           |
+| unsure                | above 0.35 and below 0.65           | We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.                                |
+| high-confidence AI    | 0.65 to 1.00 (0.65 itself is AI)    | This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it. |
 
 The text lives in `scoring.py` (`LABEL_TEXT`), chosen by
 `scoring.py::score_to_label`. Each label was reached with a real submission:
@@ -321,6 +318,7 @@ The text lives in `scoring.py` (`LABEL_TEXT`), chosen by
 0.4441 (unsure), and `samples/clearly_ai.json` 0.8838 (AI).
 
 **Why I worded the "unsure" one this way:**
+
 <!-- It's the hardest of the three. It has to admit uncertainty without
      sounding like an accusation, because the person reading it may well have
      written every word themselves. -->
@@ -330,7 +328,6 @@ is known to score plain human writing as AI-like, so the person reading this
 label most likely wrote the piece. The label must not read as a soft
 accusation, so it says the system made no call at all instead of hinting
 which way it leans.
-
 
 ---
 
@@ -451,28 +448,28 @@ The status is 400, and the log gains an entry with `"event": "rejected"`,
 
 **Moment 1: writing my acceptance criteria**
 
-- *What I asked for:* I asked Claude (in Claude Code) to help me write my five
+- _What I asked for:_ I asked Claude (in Claude Code) to help me write my five
   criteria, because I didn't know where to start.
-- *What came back:* It wouldn't write them outright, since the brief says a
+- _What came back:_ It wouldn't write them outright, since the brief says a
   criterion I didn't write is one I can't defend. Instead it gave me a
   skeleton sentence for each area and then multiple-choice questions for every
   number and reason. It also flagged a tension in my false-positive criterion:
   my reason says a wrong accusation is the expensive mistake, but my target
   allows 2 of my 10 paragraphs to be called AI.
-- *What I changed:* I chose every target myself (2 of 10, a 0.30 spread, 3 of 3
+- _What I changed:_ I chose every target myself (2 of 10, a 0.30 spread, 3 of 3
   runs, 5 of 5 appeals, 40 words to 10,000 characters). I kept 2 of 10 after
-  the warning.
+  the warning. I kept it because I expect gpt2 to misjudge some plain writing no matter what.
 
 **Moment 2: the verified-writer prompts**
 
-- *What I asked for:* I had Claude build the verified-writer path, including
+- _What I asked for:_ I had Claude build the verified-writer path, including
   the list of writing prompts a writer answers to earn the badge.
-- *What came back:* A prompt list with the claim that prompts asking for
+- _What came back:_ A prompt list with the claim that prompts asking for
   concrete personal details would read as human. When I answered two of them
   honestly in my own words, my system refused me both times as AI (combined
   0.779 and 0.787). The directions prompt in particular invites formulaic
   phrasing that gpt2 predicts easily.
-- *What I changed:* I removed the directions prompt. I decided not to retune
+- _What I changed:_ I removed the directions prompt. I decided not to retune
   the thresholds to make my own writing pass, and to record both refusals and
   the flaw they expose (the badge's gate repeats the detector's false
   positive) for unit 8 instead. The verified-writer demo below uses the
@@ -592,7 +589,18 @@ $ curl -X POST http://127.0.0.1:5000/verify \
 The audit log entry for the credential:
 
 ```json
-{"timestamp": "2026-10-29T01:55:33+00:00", "creator_id": "test_verify", "event": "verified", "status": "verified", "challenge_id": "v_6248f720816d", "guess": "human", "combined_score": 0.2745, "model_score": 0.4445, "style_score": 0.1044, "marker_score": 0.0}
+{
+  "timestamp": "2026-10-29T01:55:33+00:00",
+  "creator_id": "test_verify",
+  "event": "verified",
+  "status": "verified",
+  "challenge_id": "v_6248f720816d",
+  "guess": "human",
+  "combined_score": 0.2745,
+  "model_score": 0.4445,
+  "style_score": 0.1044,
+  "marker_score": 0.0
+}
 ```
 
 Then a submission from the same writer (`samples/borderline.json`'s text with
@@ -634,9 +642,10 @@ it as built for unit 8, where I can measure the false positive and fix it.
 
 ## Rate Limiting
 
-**My limits:** ___ per minute, ___ per day
+**My limits:** **_ per minute, _** per day
 
 **Why those numbers and not others:**
+
 <!-- Think about two people: a real writer submitting their own work a few
      times an hour, and a script sending a thousand variations to map your
      thresholds. Your numbers have to be liveable for the first and hostile to
@@ -661,8 +670,6 @@ can look like one. -->
 <!-- Every attack with its outcome and a held-or-broke mark.
      `run_attacks.py --label before` produces the table. -->
 
-
-
 **Ten audit log entries from the run**
 
 <!-- Choose entries that show the interesting failures, not the ten easiest. -->
@@ -674,8 +681,6 @@ can look like one. -->
 **The single worst outcome** — the one I'd least want to explain to a writer
 whose work got caught by it:
 
-
-
 ---
 
 ## Run Log and Verdicts
@@ -683,12 +688,12 @@ whose work got caught by it:
 <!-- Your five criteria across three trials. `run_eval.py --label before`. -->
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
-|---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |
+| --------- | ------ | ----- | ----- | ----- | ------- |
+| 1.        |        |       |       |       |         |
+| 2.        |        |       |       |       |         |
+| 3.        |        |       |       |       |         |
+| 4.        |        |       |       |       |         |
+| 5.        |        |       |       |       |         |
 
 **Real output from one trial**, pasted as text, naming the file and function
 that produced it:
@@ -713,8 +718,6 @@ that produced it:
 
      Look for a pattern. Five failures on one signal is one problem, not five. -->
 
-
-
 ---
 
 ## The Improvement
@@ -727,14 +730,10 @@ that produced it:
 
 <!-- Same format. `run_attacks.py --label after` -->
 
-
-
 **Did it help, and how do I know:**
 
 <!-- Widening the unsure band usually fixes one problem and creates another.
      Reporting that trade honestly is worth full credit. -->
-
-
 
 ---
 
@@ -743,14 +742,10 @@ that produced it:
 <!-- For each attack still getting through and each criterion still missed:
      what you'd do, and why you stopped. -->
 
-
-
 **The trade I'd make if this ran for real:**
 
 <!-- Two sentences. Fewer wrong accusations means more AI text getting through.
      Say which way you'd go and WHO PAYS FOR IT. -->
-
-
 
 <!-- ═════════════════════════════════════════════════════════════════════
 
