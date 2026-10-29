@@ -34,11 +34,91 @@
 
 <!-- ═══════════════════════ UNIT 7 — THE BUILD ═══════════════════════ -->
 
+## Stretch Features (declared before building)
+
+I declared these on 2026-10-28, before writing any code for them. The commit
+that adds this section comes before the commits that build each one.
+
+1. **A third signal: stock-phrase markers.** `markers.py::marker_signal` will
+   count how often the text uses phrases common in AI-generated prose ("it is
+   important to note", "plays a significant role", "in today's fast-paced
+   world") per 100 words, and turn that rate into a 0 to 1 score where higher
+   means more likely AI. It measures word choice, which neither gpt2
+   predictability nor the sentence-shape signal looks at. How the three
+   signals are weighted against each other goes in Signals and Scoring.
+2. **`GET /content/<id>`.** Returns one item's current status (`decided` or
+   `under_review`), its scores, its label, and any appeals, rebuilt from the
+   audit log.
+3. **A verified-human path.** A writer asks for a writing prompt
+   (`POST /verify/challenge`), writes a short response to it within a time
+   limit, and sends it to `POST /verify`. If the response arrives in time, is
+   long enough, and does not itself score as high-confidence AI, the writer's
+   `creator_id` earns a "verified writer" credential, recorded in the audit
+   log. Every later submission from that writer carries
+   `"verified_human": true` and a line in the label saying so. The credential
+   does not change the score.
+
+---
+
 ## What This Does
 
 <!-- The path a submission takes, from arriving to the label a reader sees.
      Six or seven steps — this is the trace you wrote in Milestone 1. -->
 
+1. A writing site sends `POST /submit` with JSON
+   `{"text": "...", "creator_id": "..."}`.
+2. `app.py::submit` checks the input. Missing, empty, too-short or oversized
+   `text`, or a missing `creator_id`, gets a 400 with a plain explanation and a
+   `rejected` line in the audit log, so bad input never reaches a signal.
+3. Signal one, `detector.py::model_signal`, runs gpt2 on this machine and turns
+   perplexity (how predictable the text is to a language model) into
+   `model_score`.
+4. Signal two, `stylometry.py::style_signal`, measures the text's shape
+   (sentence-length spread, vocabulary variety, punctuation) and returns
+   `style_score`.
+5. Signal three, `markers.py::marker_signal`, counts stock AI phrases and
+   returns `marker_score`.
+6. `scoring.py::combine_signals` turns the three scores into one `confidence`
+   between 0 (confidently human) and 1 (confidently AI), and
+   `scoring.py::score_to_label` maps that number to a guess and the sentence a
+   reader sees.
+7. `audit.py::log_decision` writes everything to `logs/audit.jsonl` with status
+   `decided`, and the route returns it as JSON. If the writer disagrees,
+   `POST /appeal` with the `content_id` moves the item to `under_review` and
+   logs their reasoning beside the original decision.
+
+### The contract
+
+**`POST /submit`**
+
+| Direction | Field | Type | Notes |
+|---|---|---|---|
+| in | `text` | string | Required. Not empty, between the word and character limits in `config.py` |
+| in | `creator_id` | string | Required. Who wrote it; appeals and the verified credential hang off it |
+| out | `content_id` | string | `c_` plus 12 hex characters. The handle for `/appeal` and `/content/<id>` |
+| out | `creator_id` | string | Echoed back |
+| out | `guess` | string | `"ai"`, `"human"` or `"unsure"` |
+| out | `confidence` | float | The combined score, 0.0 (confidently human) to 1.0 (confidently AI) |
+| out | `label` | string | The full sentence a reader sees |
+| out | `model_score`, `style_score`, `marker_score` | float | Each signal on its own, 0 to 1, higher means more AI-like |
+| out | `verified_human` | bool | Whether this writer holds the verified credential |
+| out | `status` | string | `"decided"` |
+
+Bad input returns 400 with `{"error": "bad_request", "message": "..."}`.
+
+**`POST /appeal`**
+
+| Direction | Field | Type | Notes |
+|---|---|---|---|
+| in | `content_id` | string | Required. Must exist in the audit log |
+| in | `reasoning` | string | Required, not empty. The writer's explanation |
+| out | `content_id` | string | Echoed back |
+| out | `status` | string | `"under_review"` |
+| out | `message` | string | A confirmation sentence for the writer |
+| out | `appealed_at` | string | UTC timestamp of the appeal |
+
+Missing fields return 400. A `content_id` that was never issued returns 404
+with `{"error": "not_found"}`.
 
 
 ---
@@ -53,19 +133,55 @@
 
 ### Signal one — the model signal
 
-**What it measures:**
+**What it measures:** How predictable the text is to gpt2, running locally.
+`detector.py::perplexity` computes perplexity over the first 400 tokens, and
+`detector.py::model_signal` squashes it onto 0 to 1 with a logistic curve:
+perplexity 45 scores 0.5, lower perplexity scores higher (more AI-like).
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** A language model
+writes by picking a likely next word again and again, so its output is text a
+model finds easy to predict. People make less likely choices: an odd word, a
+specific name, a sentence that turns halfway through.
 
-**What it can't see:**
+**What it can't see:** Who wrote the text. It rewards common words in plain
+sentences, so a person writing in a second language, a younger writer, or
+anyone writing plainly on purpose scores about as machine-like as a machine.
+The reverse fails too: AI text pushed toward rare words or odd phrasing scores
+as human. It also only reads the first 400 tokens (about 300 words), so
+anything after that has no effect.
 
 ### Signal two — the style signal
 
-**What it measures:**
+**What it measures:** The shape of the text without reading it:
+how much sentence lengths vary, how much of the vocabulary repeats
+(type-token ratio), and how much varied punctuation it uses. All three are
+combined into one 0 to 1 `style_score` in `stylometry.py::style_signal`.
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** Generated prose tends
+toward even, mid-length sentences, a safe vocabulary, and little beyond commas
+and full stops. Human writing is lumpier: a three-word sentence beside a
+forty-word one, a dash, a question, a semicolon.
 
-**What it can't see:**
+**What it can't see:** Meaning. Anything that changes the shape without
+changing the substance moves it: adding typos, splitting long sentences,
+pasting in a quotation, or adding a few dashes. Type-token ratio also falls as
+text gets longer, so length alone can push the score.
+
+### Signal three — the stock-phrase signal (stretch)
+
+**What it measures:** How often the text uses phrases common in AI-generated
+prose ("it is important to note", "plays a significant role", "in today's
+fast-paced"), counted per 100 words in `markers.py::marker_signal` and turned
+into a 0 to 1 `marker_score`.
+
+**Why that might differ between human and AI writing:** Chat models reach for
+the same transitions and hedges because they are safe, likely choices. Most
+people writing about their own life or opinions don't say "it is important to
+note".
+
+**What it can't see:** Anything outside its fixed list. One paraphrase pass
+removes every marker, and a human trained in corporate or academic writing
+uses many of these phrases naturally. The list is English only.
 
 ### The combining rule
 
