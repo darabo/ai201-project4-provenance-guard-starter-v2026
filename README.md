@@ -87,6 +87,11 @@ that adds this section comes before the commits that build each one.
    `POST /appeal` with the `content_id` moves the item to `under_review` and
    logs their reasoning beside the original decision.
 
+Two stretch routes build on this path: `GET /content/<id>` reports an item's
+current status at any time, and a writer who passes the verified-writer step
+gets `"verified_human": true` and a badge line beside the label on every later
+submission (details under Stretch Features: What I Built).
+
 ### The contract
 
 **`POST /submit`**
@@ -102,6 +107,7 @@ that adds this section comes before the commits that build each one.
 | out | `label` | string | The full sentence a reader sees |
 | out | `model_score`, `style_score`, `marker_score` | float | Each signal on its own, 0 to 1, higher means more AI-like |
 | out | `verified_human` | bool | Whether this writer holds the verified credential |
+| out | `verified_badge` | string or null | The badge line shown beside the label for a verified writer; `null` otherwise |
 | out | `status` | string | `"decided"` |
 
 Bad input returns 400 with `{"error": "bad_request", "message": "..."}`.
@@ -252,6 +258,46 @@ The second split is in the other direction: on `clearly_human.json` gpt2 gives
 words are easy to predict. The style signal (0.104) reads the uneven sentences
 and dashes correctly, and the average lands at 0.275, human.
 
+**A false positive on my own writing (kept as-is for unit 8):** The fourth
+calibration input was plain writing of my own. I wrote it as my answer to the
+verified-writer prompt "Describe the route you take most often, as if giving
+directions to a friend", and my system labeled it high-confidence AI:
+
+> Go straight until you hit 50th St, turn right, go until you hit 8th Ave,
+> then turn right. Go about three blocks until you reach the Apple Store, and
+> take a left at the traffic light. You will walk by a New York Public Library
+> branch, go past it until you hit the Burger King and take a right. Walk down
+> until you hit the Starbucks and take a left. The building will be right in
+> front of you. It's a white building with a black awning.
+
+| | my directions | `clearly_ai.json` |
+|---|---|---|
+| perplexity | 16.3 | 22.3 |
+| model | 0.835 | 0.754 |
+| style | 0.723 | 0.914 |
+| marker | 0.000 | 0.994 |
+| combined | 0.779 (AI) | 0.884 (AI) |
+
+gpt2 found my directions more predictable than the AI sample, because
+directions are made of stock moves ("go until you hit", "take a left"). The
+style signal agreed: no dashes, semicolons or quotes (punctuation density 0.0,
+the most AI-typical value) and evenly sized steps (spread 0.42). Two of three
+signals were over 0.5, so my agreement guard let the AI label through, and the
+marker signal, which correctly found nothing, can only push scores up.
+
+This one is personal. People often tell me my writing looks like AI, and my
+own detector agreed with them on the first try. It is the false positive from
+Milestone 1 in practice: a real writer, writing plainly, labeled AI by a
+system that measures predictability rather than authorship.
+
+I'm deliberately not retuning to fix it now. Widening the unsure band (an AI
+threshold around 0.80 would move this text to unsure and still label
+`clearly_ai.json` AI at 0.884) is the obvious improvement, and I'm saving it
+for unit 8, where it can be measured before and after against my criteria. I
+did remove the directions prompt from the verified-writer path
+(`credentials.py::PROMPTS`), because a prompt that invites formulaic writing
+sets honest writers up to fail.
+
 
 
 ---
@@ -300,14 +346,30 @@ which way it leans.
      two off the response, so leaving them out costs you next unit's
      diagnostics. -->
 
+`samples/clearly_ai.json` holds `{"text": "The importance of effective time
+management cannot be overstated in today's fast-paced work environment. ...",
+"creator_id": "demo_instructor"}`.
+
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
+  -d @samples/clearly_ai.json
 ```
 
 ```json
-
+{
+  "confidence": 0.8838,
+  "content_id": "c_47219dc63d36",
+  "creator_id": "demo_instructor",
+  "guess": "ai",
+  "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+  "marker_score": 0.9943,
+  "model_score": 0.7544,
+  "status": "decided",
+  "style_score": 0.9145,
+  "verified_badge": null,
+  "verified_human": false
+}
 ```
 
 **An appeal**
@@ -315,38 +377,256 @@ $ curl -X POST http://127.0.0.1:5000/submit \
 ```bash
 $ curl -X POST http://127.0.0.1:5000/appeal \
   -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
+  -d '{"content_id": "c_47219dc63d36", "reasoning": "I wrote this for my team'\''s newsletter. I always write in this formal style at work."}'
 ```
 
 ```json
-
+{
+  "appealed_at": "2026-10-29T02:15:12+00:00",
+  "content_id": "c_47219dc63d36",
+  "message": "Thank you. Your appeal has been recorded and this piece is now marked as under review. A person will read your explanation alongside our original result.",
+  "status": "under_review"
+}
 ```
 
 **What the log shows afterwards**
 
+The original decision stays exactly as it was; the appeal is a new line after
+it with status `under_review`.
+
 ```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
+$ curl "http://127.0.0.1:5000/log?limit=2"
 ```
 
 ```json
-
+{
+  "count": 2,
+  "entries": [
+    {
+      "combined_score": 0.8838,
+      "content_id": "c_47219dc63d36",
+      "creator_id": "demo_instructor",
+      "guess": "ai",
+      "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+      "marker_score": 0.9943,
+      "model_score": 0.7544,
+      "status": "decided",
+      "style_score": 0.9145,
+      "timestamp": "2026-10-29T02:15:12+00:00",
+      "verified_human": false
+    },
+    {
+      "content_id": "c_47219dc63d36",
+      "creator_id": "demo_instructor",
+      "event": "appeal",
+      "reasoning": "I wrote this for my team's newsletter. I always write in this formal style at work.",
+      "status": "under_review",
+      "timestamp": "2026-10-29T02:15:12+00:00"
+    }
+  ]
+}
 ```
+
+**Bad input is refused, not crashed on** (criterion 5). A 39-word text:
+
+```bash
+$ curl -X POST http://127.0.0.1:5000/submit \
+  -H "Content-Type: application/json" \
+  -d '{"text": "word word word ... (39 words)", "creator_id": "eval_bad_short"}'
+```
+
+```json
+{
+  "error": "bad_request",
+  "message": "The text has 39 words; at least 40 are needed to judge it fairly."
+}
+```
+
+The status is 400, and the log gains an entry with `"event": "rejected"`,
+`"reason": "text_too_short"`.
 
 ---
 
 ## How I Used AI
 
-**Moment 1**
+**Moment 1: writing my acceptance criteria**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I asked Claude (in Claude Code) to help me write my five
+  criteria, because I didn't know where to start.
+- *What came back:* It wouldn't write them outright, since the brief says a
+  criterion I didn't write is one I can't defend. Instead it gave me a
+  skeleton sentence for each area and then multiple-choice questions for every
+  number and reason. It also flagged a tension in my false-positive criterion:
+  my reason says a wrong accusation is the expensive mistake, but my target
+  allows 2 of my 10 paragraphs to be called AI.
+- *What I changed:* I chose every target myself (2 of 10, a 0.30 spread, 3 of 3
+  runs, 5 of 5 appeals, 40 words to 10,000 characters). I kept 2 of 10 after
+  the warning.
 
-**Moment 2**
+**Moment 2: the verified-writer prompts**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I had Claude build the verified-writer path, including
+  the list of writing prompts a writer answers to earn the badge.
+- *What came back:* A prompt list with the claim that prompts asking for
+  concrete personal details would read as human. When I answered two of them
+  honestly in my own words, my system refused me both times as AI (combined
+  0.779 and 0.787). The directions prompt in particular invites formulaic
+  phrasing that gpt2 predicts easily.
+- *What I changed:* I removed the directions prompt. I decided not to retune
+  the thresholds to make my own writing pass, and to record both refusals and
+  the flaw they expose (the badge's gate repeats the detector's false
+  positive) for unit 8 instead. The verified-writer demo below uses the
+  course's human sample, labeled as such.
+
+---
+
+## Stretch Features: What I Built
+
+All three were declared at the top of this README before any of their code
+existed (commit `9d55dc7`).
+
+### Third signal: stock phrases
+
+Built as declared in `markers.py::marker_signal`; the weighting note is in
+Signals and Scoring under "How the three signals are weighted against each
+other". What it changed: `/submit` now returns and logs `marker_score`, and
+`scoring.py::combine_signals` takes it as a third argument (a one-way boost
+plus a vote in the agreement guard).
+
+### `GET /content/<id>`
+
+Built in `app.py::get_content`. It reads every audit-log line for the id and
+reports the newest status, so an appealed item shows `under_review`. What it
+changed: nothing about existing routes; it only reads the log. Using the item
+from the Sample Run above, after its appeal:
+
+```bash
+$ curl http://127.0.0.1:5000/content/c_47219dc63d36
+```
+
+```json
+{
+  "appeals": [
+    {
+      "appealed_at": "2026-10-29T02:15:12+00:00",
+      "reasoning": "I wrote this for my team's newsletter. I always write in this formal style at work."
+    }
+  ],
+  "confidence": 0.8838,
+  "content_id": "c_47219dc63d36",
+  "creator_id": "demo_instructor",
+  "guess": "ai",
+  "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+  "marker_score": 0.9943,
+  "model_score": 0.7544,
+  "status": "under_review",
+  "style_score": 0.9145,
+  "submitted_at": "2026-10-29T02:15:12+00:00",
+  "verified_human": false
+}
+```
+
+An id that was never issued returns 404 with `{"error": "not_found", ...}`.
+
+### Verified-writer path
+
+**The extra step:** a writer calls `POST /verify/challenge` and gets a personal
+prompt and a `challenge_id`. They then have 10 minutes to send at least 60
+words to `POST /verify`. It's refused if the reply comes back in under 45
+seconds (faster than anyone types 60 words), comes from a different
+`creator_id`, reuses a challenge, or scores as high-confidence AI through the
+same three signals as `/submit`. Passing writes a `"verified"` entry to the
+audit log. From then on, every submission by that `creator_id` carries
+`"verified_human": true` and a `verified_badge` line beside its label. The
+badge never changes the score. The logic lives in `credentials.py`; the routes
+are `app.py::verify_challenge` and `app.py::verify`.
+
+**What it changed:** the three-signal scoring moved out of `/submit` into
+`app.py::_score_text` so `/verify` judges text exactly the same way;
+`audit.py` gained `log_event` for the challenge and credential entries;
+`/submit` responses gained `verified_human` and `verified_badge`, and decision
+log entries gained `verified_human`.
+
+**The credential appearing on an item.** This run uses the course's human
+sample (`samples/clearly_human.json`) as the writer's answer, under the
+`creator_id` `test_verify`. It drew the directions prompt, which I later
+removed, and the sample doesn't answer it: the gate checks timing, length and
+score, not whether the text is on topic.
+
+```bash
+$ curl -X POST http://127.0.0.1:5000/verify/challenge \
+  -H "Content-Type: application/json" \
+  -d '{"creator_id": "test_verify"}'
+```
+
+```json
+{
+  "challenge_id": "v_6248f720816d",
+  "expires_at": "2026-10-29T02:04:45+00:00",
+  "instructions": "Write at least 60 words responding to the prompt, in your own words, then send them to POST /verify with this challenge_id before it expires.",
+  "issued_at": "2026-10-29T01:54:45+00:00",
+  "min_words": 60,
+  "prompt": "Describe the route you take most often, as if giving directions to a friend."
+}
+```
+
+Sending the answer immediately is refused with a 400 for arriving faster than
+anyone could type 60 words. Sending it again 46 seconds after the challenge:
+
+```bash
+$ curl -X POST http://127.0.0.1:5000/verify \
+  -H "Content-Type: application/json" \
+  -d '{"creator_id": "test_verify", "challenge_id": "v_6248f720816d", "text": "I didn'\''t sleep. Not properly, anyway ... (full text of samples/clearly_human.json)"}'
+```
+
+```json
+{
+  "badge": "Verified writer: completed a live writing check on 29 October 2026.",
+  "creator_id": "test_verify",
+  "message": "You're verified. Your future submissions will show this badge beside their label.",
+  "verified": true,
+  "verified_at": "2026-10-29T01:55:33+00:00"
+}
+```
+
+The audit log entry for the credential:
+
+```json
+{"timestamp": "2026-10-29T01:55:33+00:00", "creator_id": "test_verify", "event": "verified", "status": "verified", "challenge_id": "v_6248f720816d", "guess": "human", "combined_score": 0.2745, "model_score": 0.4445, "style_score": 0.1044, "marker_score": 0.0}
+```
+
+Then a submission from the same writer (`samples/borderline.json`'s text with
+`creator_id` `test_verify`) shows the badge on the item:
+
+```json
+{
+  "confidence": 0.4441,
+  "content_id": "c_d11b5333aa47",
+  "creator_id": "test_verify",
+  "guess": "unsure",
+  "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+  "marker_score": 0.0,
+  "model_score": 0.3489,
+  "status": "decided",
+  "style_score": 0.5393,
+  "verified_badge": "Verified writer: completed a live writing check on 29 October 2026.",
+  "verified_human": true
+}
+```
+
+**What happened when I tried it with my own writing:** refused, twice. My
+directions answer scored 0.779 and my answer to "Write about something you
+changed your mind about in the last year" scored 0.787, both
+high-confidence AI, both for the reasons in Signals and Scoring (predictable
+phrasing to gpt2, even sentences and no expressive punctuation to the style
+signal). Both refusals are in `logs/audit.jsonl` under `creator_id` `dara`
+with `"reason": "verify_scored_ai"`.
+
+That exposes a flaw in my own design: the gate that grants the "verified
+human" badge uses the same detector, so the writers most likely to be
+wrongly accused are the ones it locks out. A fairer version would send an
+AI-scored answer to a person for review instead of refusing it. I'm leaving
+it as built for unit 8, where I can measure the false positive and fix it.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
