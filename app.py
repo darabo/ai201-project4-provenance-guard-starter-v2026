@@ -199,17 +199,52 @@ def submit():
     what should this do when `text` is missing, empty, or enormous? A crash on
     a malformed input is one of the most common real failures there is.
     """
+
     payload = request.get_json(silent=True) or {}
+    text = payload.get("text")
+    creator_id = payload.get("creator_id", "unknown")
+
+    #step 3 - one real signal that we first test from the terminal
+    # python detector.py "some text"
+    import detector
+    model_score = detector.model_signal(text)
+
+    # Step 2 - JSON goes in: pull text and creator_id out of the body
+    if not isinstance(text, str) or not text.strip():
+        return jsonify({"error": "bad_request", "message": "Send JSON with a non-empty \"text\"."}), 400
+
+    # Step 4 - log the decision. The content_id is what /appeal needs later.
+    content_id = f"c_{uuid.uuid4().hex[:12]}"
+    audit.log_decision(
+        content_id=content_id,
+        creator_id=creator_id,
+        model_score=model_score,
+        status="decided",
+    )
+
+    #step 1 - the route answers, Hardcoded without any logic yet.
+    return jsonify({
+        "content_id": "hardcoded",
+        "creator_id": creator_id,
+        "guess": "unsure",
+        "confidence": model_score,
+        "label": "not build yet",
+        "model_score": model_score ,
+        "style_score": None,
+    }), 200
+
+    
+
 
     # TODO: delete this and build the route.
-    return jsonify({
-        "error": "not_implemented",
-        "message": "POST /submit isn't built yet — see the TODO in app.py.",
-        "you_sent": {
-            "text_length": len(payload.get("text", "")),
-            "creator_id": payload.get("creator_id"),
-        },
-    }), 501
+    # return jsonify({
+    #     "error": "not_implemented",
+    #     "message": "POST /submit isn't built yet — see the TODO in app.py.",
+    #     "you_sent": {
+    #         "text_length": len(payload.get("text", "")),
+    #         "creator_id": payload.get("creator_id"),
+    #     },
+    # }), 501
 
 
 @app.post("/appeal")
