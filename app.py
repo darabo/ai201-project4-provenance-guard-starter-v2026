@@ -31,6 +31,8 @@ from flask import Flask, jsonify, request
 import audit
 import config
 import detector
+import markers
+import scoring
 import stylometry
 
 app = Flask(__name__)
@@ -236,10 +238,17 @@ def submit():
         audit.log_rejection(creator_id=creator_id, reason="detector_unavailable", message=str(exc))
         return jsonify({"error": "detector_unavailable", "message": str(exc)}), 503
 
-    # PLACEHOLDERS until Milestones 4 and 5: confidence is signal one alone,
-    # and there's no real label yet.
+    # Step 5: signals two and three. Both are plain Python string work, so
+    # they take milliseconds next to gpt2's second or two.
+    style_score = stylometry.style_signal(text)
+    marker_score = markers.marker_signal(text)
+
+    # Step 6: one number from three. The rule and its numbers are explained
+    # in scoring.combine_signals and above the weights in config.py.
+    confidence = scoring.combine_signals(model_score, style_score, marker_score)
+
+    # PLACEHOLDER until Milestone 5: no real label yet.
     guess = "unsure"
-    confidence = model_score
     label = "Not built yet: labels arrive in Milestone 5."
 
     # Step 4: log the decision. The content_id is the handle /appeal needs
@@ -251,11 +260,15 @@ def submit():
         creator_id=creator_id,
         guess=guess,
         model_score=model_score,
+        style_score=style_score,
         combined_score=confidence,
         label=label,
         status="decided",
+        marker_score=marker_score,  # not one of the nine standard fields, so it rides in **extra
     )
 
+    # All three signal scores go in the response, not just the log: unit 8's
+    # run_attacks.py and run_eval.py read model_score and style_score from here.
     return jsonify({
         "content_id": content_id,
         "creator_id": creator_id,
@@ -263,7 +276,8 @@ def submit():
         "confidence": confidence,
         "label": label,
         "model_score": model_score,
-        "style_score": None,  # signal two arrives in Milestone 4
+        "style_score": style_score,
+        "marker_score": marker_score,
         "status": "decided",
     }), 200
 

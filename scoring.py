@@ -19,7 +19,7 @@ you claim, so that line should read `scoring.py::combine_signals`.
 import config
 
 
-def combine_signals(model_score: float, style_score: float) -> float:
+def combine_signals(model_score: float, style_score: float, marker_score: float = 0.0) -> float:
     """
     Combine two 0–1 signals into one 0–1 score. ← TODO (Milestone 4)
 
@@ -51,12 +51,39 @@ def combine_signals(model_score: float, style_score: float) -> float:
 
     The weights in config.py are placeholders. Change them, or ignore them and
     write a different rule.
+
+    My rule, with the reasoning for every number, is written out above the
+    weights in config.py. In short:
+
+      1. base: the equal-weight average of model_score and style_score.
+      2. marker boost: stock phrases (marker_score, the stretch third signal)
+         can only push the score up, never down.
+      3. agreement guard: unless at least two signals lean AI, the score is
+         capped just below AI_THRESHOLD, so one signal alone can't produce a
+         high-confidence AI label.
+
+    marker_score defaults to 0.0 so a caller with only the two required
+    signals still gets steps 1 and 3.
     """
-    # TODO: replace this
-    return (
+    # Step 1: the two required signals, weighted equally.
+    base = (
         config.WEIGHT_MODEL_SIGNAL * model_score
         + config.WEIGHT_STYLE_SIGNAL * style_score
     )
+
+    # Step 2: one-way marker boost. (1 - base) is the room left before 1.0,
+    # and the boost takes at most MARKER_BOOST (30%) of that room.
+    score = base + config.MARKER_BOOST * marker_score * (1.0 - base)
+
+    # Step 3: the agreement guard. Count signals that lean AI on their own.
+    agreeing = sum(
+        s >= config.AGREEMENT_LEVEL for s in (model_score, style_score, marker_score)
+    )
+    if agreeing < config.MIN_AGREEING:
+        # 0.01 under the line: still the top of "unsure", never "AI".
+        score = min(score, config.AI_THRESHOLD - 0.01)
+
+    return round(min(max(score, 0.0), 1.0), 4)
 
 
 def score_to_label(score: float) -> tuple[str, str]:

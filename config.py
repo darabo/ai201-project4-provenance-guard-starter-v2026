@@ -70,8 +70,32 @@ MAX_TEXT_CHARS = 10_000
 # down BEFORE you code it, and to put the numbers in your README. Whatever you
 # decide, it goes here.
 
+#
+# My rule (scoring.py::combine_signals), in three steps:
+#
+#   1. base = 0.5 * model_score + 0.5 * style_score
+#      Equal weights: each of the two required signals has a known blind spot
+#      (gpt2 accuses plain writers; style can't read), and I have no evidence
+#      yet that one is more trustworthy than the other.
+#
+#   2. final = base + MARKER_BOOST * marker_score * (1 - base)
+#      Stock phrases can only push the score UP. Finding "it is important to
+#      note" is evidence of AI; finding none is not evidence of a human,
+#      because one paraphrase pass removes them all. Multiplying by (1 - base)
+#      means the boost shrinks as the score nears 1, so it never passes 1.0.
+#      With MARKER_BOOST = 0.3, a text at base 0.50 full of markers rises to
+#      at most 0.65.
+#
+#   3. If fewer than MIN_AGREEING of the three signals are at or above
+#      AGREEMENT_LEVEL, the score is capped just under AI_THRESHOLD, so the
+#      result can be "unsure" but never high-confidence AI. No single signal
+#      can accuse a writer on its own.
+
 WEIGHT_MODEL_SIGNAL = 0.5
 WEIGHT_STYLE_SIGNAL = 0.5
+MARKER_BOOST = 0.3
+AGREEMENT_LEVEL = 0.5
+MIN_AGREEING = 2
 
 
 # ─── Thresholds (Milestone 5) ────────────────────────────────────────────────

@@ -188,16 +188,69 @@ uses many of these phrases naturally. The list is English only.
 <!-- Write the rule in words, then give the numbers. What happens when the two
      signals disagree? -->
 
-**The rule:**
+**The rule:** Average the two required signals equally to get a base score.
+Then let the stock-phrase signal push that score up, never down, because
+finding stock phrases is evidence of AI while finding none proves nothing (a
+paraphrase removes them all). Finally, unless at least two of the three
+signals lean AI on their own, cap the score just under the AI line, so no
+single signal can produce a high-confidence AI label. That guard exists for
+the false positive: signal one alone scores plain human writing as AI-like.
 
 **The numbers:**
+
+1. `base = 0.5 × model_score + 0.5 × style_score`
+2. `final = base + 0.3 × marker_score × (1 − base)`, so a text at base 0.50
+   full of stock phrases rises to at most 0.65, and the score can never pass
+   1.0.
+3. If fewer than 2 of the 3 signals are at or above 0.5, `final` is capped at
+   0.64 (0.01 under the AI threshold of 0.65).
+
+All of these live in `config.py` (`WEIGHT_MODEL_SIGNAL`, `WEIGHT_STYLE_SIGNAL`,
+`MARKER_BOOST`, `AGREEMENT_LEVEL`, `MIN_AGREEING`).
+
+**How the three signals are weighted against each other (stretch note):** The
+two required signals carry equal weight because each has a blind spot I can
+name and I have no evidence yet that one is more reliable. The stock-phrase
+signal gets no weight in the base at all. It acts only as a one-way boost
+worth at most 30% of the remaining distance to 1.0, because its absence is
+weak evidence of anything. It does count as one of the three votes in the
+agreement guard.
+
+Inside signal two, the three measures are blended 0.4 sentence-length spread,
+0.4 expressive punctuation, 0.2 type-token ratio, each first mapped onto 0 to 1
+between an AI-typical and a human-typical anchor (`stylometry.py`, constants
+`SPREAD_ANCHORS`, `PUNCT_ANCHORS`, `TTR_ANCHORS`, `STYLE_WEIGHTS`).
+Type-token ratio gets the least weight because its direction surprised me: on
+my samples the AI text had the more varied vocabulary (0.94 against 0.83 for
+the human sample), so I flipped it to count high variety as AI-typical, and
+three samples is thin evidence for that.
 
 **Where it lives:** `scoring.py::combine_signals`
 
 <!-- ⚠️ The grader checks your code against that line. If your rule lives
      somewhere else, say where. -->
 
+**All three signals on the calibration samples:**
+
+| Sample | model | style | marker | combined |
+|---|---|---|---|---|
+| `samples/clearly_ai.json` | 0.754 | 0.914 | 0.994 | 0.884 |
+| `samples/borderline.json` (lightly edited AI) | 0.349 | 0.539 | 0.000 | 0.444 |
+| `samples/clearly_human.json` | 0.445 | 0.104 | 0.000 | 0.275 |
+
 **A case where my two signals split, and what my rule does with it:**
+`samples/borderline.json` is the AI paragraph rewritten by hand: stock
+phrases removed, a dash and a semicolon added, British spellings. gpt2 reads
+it as fairly human (0.349) while the style signal puts it in the middle
+(0.539), and the marker signal finds nothing (0.0). A plain three-way average
+that counted the marker zero as evidence would have dropped it to about 0.30,
+a confident "human". My rule ignores the marker zero, averages the two
+required signals to 0.444, and labels it unsure, which is what it is.
+
+The second split is in the other direction: on `clearly_human.json` gpt2 gives
+0.445, more AI-like than the edited AI text, because the paragraph's everyday
+words are easy to predict. The style signal (0.104) reads the uneven sentences
+and dashes correctly, and the average lands at 0.275, human.
 
 
 
