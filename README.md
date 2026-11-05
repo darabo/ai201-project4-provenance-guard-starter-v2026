@@ -1328,18 +1328,247 @@ return the correct 400. Nothing crashed, and every refusal was logged.
 
 ## The Improvement
 
-**What I changed:**
+**What I changed:** One line of scoring, in `stylometry.py::style_signal`.
+The punctuation component is now capped at 0.5 (`PUNCT_ABSENCE_CAP`), so a
+text with no expressive punctuation scores neutral on that component instead of
+fully AI-typical. Real dashes, quotes, questions and semicolons still pull the
+score toward human exactly as before. Because that component carries 0.4 of
+the style score, the most this can move style is 0.2, and only for texts with
+little or no expressive punctuation. Nothing else changed: same signals, same
+weights, same thresholds, same labels.
 
-**Which diagnosis pointed at it:**
+**Which diagnosis pointed at it:** Problem 1. All seven human texts wrongly
+labeled AI (FP01 to FP07), and four of the five of my own paragraphs labeled
+AI, had an expressive punctuation density of exactly 0.00, which the old
+anchor scored as the most AI-typical value possible. `clearly_ai.json` also has
+none, so the absence of punctuation was never telling people and models
+apart; it was only adding 0.4 toward "AI" for everyone who writes plainly.
 
 ### Attack Run — After
 
 <!-- Same format. `run_attacks.py --label after` -->
 
+`python run_attacks.py --set attack_set --label after`, all 56 attacks, same
+service, same order, with improvement 1 as the only change
+(`results/attack_run_2026-11-04_2100_after.md`). The Note column gives the
+before result wherever it changed.
+
+| ID | Family | Targeting | Status | Guess | Score | Verdict | Note |
+|---|---|---|---|---|---|---|---|
+| EV01 | evasion | signal two: typos raise word variety | 200 | unsure | 0.611 | **BROKE** | before: ai 0.686 |
+| EV02 | evasion | signal two: broken-up sentences raise length spread | 200 | unsure | 0.578 | **BROKE** |  |
+| EV03 | evasion | signal two: a pasted quotation changes the shape | 200 | ai | 0.727 | HELD |  |
+| EV04 | evasion | signal one: unusual words raise perplexity | 200 | ai | 0.785 | HELD | before: ai 0.858 |
+| EV05 | evasion | both signals: heavy human editing pass | 200 | unsure | 0.384 | **BROKE** | before: unsure 0.435 |
+| EV06 | evasion | signal two: one very long sentence and one very short | 200 | unsure | 0.599 | **BROKE** | before: ai 0.672 |
+| EV07 | evasion | signal two: padding with punctuation | 200 | ai | 0.670 | HELD |  |
+| EV08 | evasion | signal one: text below the token window | 400 | — | — | HELD | refused at 10 words; never scored |
+| EV09 | evasion | both: AI text with a human opening paragraph bolted on | 200 | ai | 0.772 | HELD | before: ai 0.847 |
+| EV10 | evasion | signal two: repeated stanza structure | 200 | ai | 0.830 | HELD | before: ai 0.900 |
+| FP01 | false_positive | plain, clear human writing with no flourishes | 200 | unsure | 0.576 | HELD | before: ai 0.676 |
+| FP02 | false_positive | human writing in a formal register | 200 | ai | 0.669 | **BROKE** | before: ai 0.769 |
+| FP03 | false_positive | a non-native English speaker writing carefully | 200 | ai | 0.726 | **BROKE** | before: ai 0.826 |
+| FP04 | false_positive | a student essay written to a rubric | 200 | ai | 0.771 | **BROKE** | before: ai 0.855 |
+| FP05 | false_positive | technical documentation written by a person | 200 | ai | 0.700 | **BROKE** | before: ai 0.800 |
+| FP06 | false_positive | a person imitating a formal template | 200 | unsure | 0.640 | HELD | before: ai 0.768 |
+| FP07 | false_positive | human writing that repeats a phrase deliberately | 200 | unsure | 0.597 | HELD | before: ai 0.697 |
+| FP08 | false_positive | very short genuine human submission | 400 | — | — | HELD | 8 words, refused with a 400: not accused, but turned away |
+| PI01 | prompt_injection | instruction to ignore the check | 200 | unsure | 0.636 | **BROKE** | instruction did nothing; the punctuation change lowered style to 0.53, so this AI text fell into unsure; before: ai 0.708 |
+| PI02 | prompt_injection | instruction disguised as a system message | 200 | unsure | 0.558 | **BROKE** | before: unsure 0.566 |
+| PI03 | prompt_injection | instruction wrapped in the writer's voice | 200 | ai | 0.694 | HELD |  |
+| PI04 | prompt_injection | attempt to make the label text hostile | 200 | unsure | 0.500 | HELD | label text is fixed; nothing echoed back |
+| PI05 | prompt_injection | attempt to inject into the audit log | 400 | — | — | HELD | refused at 28 words; nothing injected into the log |
+| PI06 | prompt_injection | instruction plus real human text | 200 | unsure | 0.551 | HELD | instruction did nothing; its human text is no longer labeled AI; before: ai 0.651 |
+| MF01 | malformed | text is only whitespace | 400 | — | — | HELD | refused with a 400 |
+| MF02 | malformed | text is a single character | 400 | — | — | HELD | refused with a 400 |
+| MF03 | malformed | text is control characters | 400 | — | — | HELD | refused with a 400 |
+| MF04 | malformed | text is only punctuation | 400 | — | — | HELD | refused with a 400 |
+| MF05 | malformed | text is a very long single word | 400 | — | — | HELD | refused with a 400 |
+| MF06 | malformed | text is emoji only | 400 | — | — | HELD | refused with a 400 |
+| MF07 | malformed | text is right-to-left script | 400 | — | — | HELD | refused with a 400 |
+| MF08 | malformed | text is 60,000 characters | 400 | — | — | HELD | refused with a 400 |
+| RQ01 | malformed | no text field at all | 400 | — | — | HELD | refused with a 400 |
+| RQ02 | malformed | no creator_id | 400 | — | — | HELD | refused with a 400 |
+| RQ03 | malformed | text is a number | 400 | — | — | HELD | refused with a 400 |
+| RQ04 | malformed | text is a list | 400 | — | — | HELD | refused with a 400 |
+| RQ05 | malformed | text is null | 400 | — | — | HELD | refused with a 400 |
+| RQ06 | malformed | creator_id is an object | 400 | — | — | HELD | refused with a 400 |
+| RQ07 | malformed | body is a JSON array, not an object | 400 | — | — | HELD | refused with a 400 |
+| RQ08 | malformed | body is unparseable JSON | 400 | — | — | HELD | refused with a 400 |
+| RQ09 | malformed | body is empty | 400 | — | — | HELD | refused with a 400 |
+| RQ10 | malformed | body is form-encoded, not JSON | 429 | — | — | HELD | 429 on the shared-address bucket, as before |
+| RQ11 | malformed | body is JSON claiming to be plain text | 429 | — | — | HELD | 429 on the shared-address bucket, as before |
+| RQ12 | malformed | deeply nested JSON | 400 | — | — | HELD | refused with a 400 |
+| FL01_01 | flood_same_creator | 20 rapid submissions from one creator | 400 | — | — | HELD | refused with a 400 (counted) |
+| FL01_02 | flood_same_creator | 20 rapid submissions from one creator | 400 | — | — | HELD | refused with a 400 (counted) |
+| FL01_03 | flood_same_creator | 20 rapid submissions from one creator | 400 | — | — | HELD | refused with a 400 (counted) |
+| FL01_04 | flood_same_creator | 20 rapid submissions from one creator | 400 | — | — | HELD | refused with a 400 (counted) |
+| FL01_05 | flood_same_creator | 20 rapid submissions from one creator | 400 | — | — | HELD | refused with a 400 (counted) |
+| FL01_06 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_07 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_08 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_09 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_10 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_11 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_12 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+
+| Family | Attacks | Broke before | Broke after |
+|---|---|---|---|
+| evasion | 10 | 2 (EV02, EV05) | 4 (EV01, EV02, EV05, EV06) |
+| false_positive | 8 | 7 (FP01 to FP07) | 4 (FP02, FP03, FP04, FP05) |
+| prompt_injection | 6 | 1 (PI02) | 2 (PI01, PI02) |
+| malformed | 20 | 0 | 0 |
+| flood_same_creator | 12 | 0 | 0 |
+| **Total** | **56** | **10** | **10** |
+
+### Run Log — After
+
+`python run_eval.py --label after` (`results/run_2026-11-04_2101_after.md`),
+`python run_appeals.py --label after` (`results/appeals_2026-11-04_2101_after.md`),
+and the JSON-list body by hand, in the same order and timing as before.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict | Before |
+|---|---|---|---|---|---|---|
+| 1. My own writing is rarely called AI | at most 2 of 10 labeled `ai` | 2/10 | 2/10 | 2/10 | **MET** | 5/10, MISSED |
+| 2. Clearly-AI and clearly-human score far apart | gap of at least 0.30 | 0.539 | 0.539 | 0.539 | **MET** | 0.609, MET |
+| 3. All three labels are reachable | ai, unsure, human on the 3 samples | 3/3 | 3/3 | 3/3 | **MET** | MET |
+| 4. Every appeal is recorded and changes status | 5 of 5 recorded, fake id 404 with no appeal entry | 5/5, 404 | 5/5, 404 | 5/5, 404 | **MET** | MET |
+| 5. Bad input is refused cleanly | 7 of 7 bodies return 400, none 500, each logged | 7/7 | 7/7 | 6/7 (one 429) | **MISSED** | MISSED |
+
+Criterion 1 is MET at exactly the limit: paragraphs 3 (0.694) and 9 (0.674)
+are still labeled AI in every trial, so 2 of 10, and any third one would have
+missed. Criterion 5 didn't move because the change doesn't touch the route.
+
+Criterion 1, trial 1, after (`run_eval.py::main` against `app.py::submit`):
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5259,
+    "model_score": 0.5643,
+    "style_score": 0.4874,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Few nations in the world share polarizing views among people in the wo"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5478,
+    "model_score": 0.3913,
+    "style_score": 0.7044,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Pakistan is considered by many in the West as two-faced, claiming that"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.6937,
+    "model_score": 0.6715,
+    "style_score": 0.7159,
+    "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+    "sent": "Others on the other hand see Pakistan as a land filled with vast cultu"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5871,
+    "model_score": 0.5793,
+    "style_score": 0.5949,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "The relations of these two nations are strained and tense, with their "
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5486,
+    "model_score": 0.6255,
+    "style_score": 0.4718,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "The histories of both nations have always been tied together, from Anc"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6331,
+    "model_score": 0.5645,
+    "style_score": 0.7016,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "However after the 1979 Iranian Revolution, with the Iranian Monarchy r"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5878,
+    "model_score": 0.5933,
+    "style_score": 0.5824,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "After 2001, with the fall of the Taliban, through proxy groups, Iran a"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6111,
+    "model_score": 0.6223,
+    "style_score": 0.6,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "With all this in mind one should consider the other side in this relat"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.6736,
+    "model_score": 0.7288,
+    "style_score": 0.6184,
+    "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+    "sent": "It must also be stressed that, as cold as it sounds, a nation should p"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.3583,
+    "model_score": 0.2976,
+    "style_score": 0.419,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Even now Iran think of themselves as surrounded by their enemies, the "
+  }
+]
+```
+
 **Did it help, and how do I know:**
 
 <!-- Widening the unsure band usually fixes one problem and creates another.
      Reporting that trade honestly is worth full credit. -->
+
+It helped the problem it was aimed at, and it cost exactly what the other side
+of the trade predicts. I know because the same 56 attacks and the same five
+criteria ran before and after with nothing else changed, and every score
+difference is the punctuation component: style fell by the full 0.2 on every
+text with no expressive punctuation, by less on texts with a little (EV05 by
+0.10, PI02 by 0.02), and not at all on texts with 2.5 or more marks per 100
+words, where the old score was already under the cap.
+
+- **Fixed:** wrong accusations of real writers fell from 7 of 7 scorable
+  false-positive attacks to 4. FP01 (plain), FP06 (a formal template) and FP07
+  (deliberate repetition) moved to unsure, and PI06's human campsite text did
+  too. My own writing went from 5 of 10 labeled AI to 2 of 10, which turned
+  criterion 1 from MISSED to MET.
+- **Cost:** AI text escaping the AI label rose from 3 to 6 (EV01, EV06 and
+  PI01 joined EV02, EV05 and PI02, all now "unsure"). The cap can't tell an AI
+  text with no punctuation from a human one, so it lowers both. The spread
+  between the two samples shrank from 0.609 to 0.539, still well above 0.30.
+- **Not fixed:** FP02 to FP05 (formal register, a non-native speaker, a
+  student essay, technical documentation) are still labeled AI, now between
+  0.669 and 0.771. Signal one scores them 0.74 to 0.83 by itself, and their
+  even sentences keep style above 0.6, so two signals still agree and the guard
+  still lets it through. The punctuation fix removed one wrong reason to accuse
+  them, not the main one.
+
+Total broken attacks stayed at 10, but which 10 changed: three fewer writers
+falsely accused, three more AI texts let through as "unsure". On a writing
+site that is the direction I want, because "unsure" makes no accusation,
+while the AI label does.
 
 ---
 

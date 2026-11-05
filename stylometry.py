@@ -181,7 +181,11 @@ def style_signal(text: str) -> float:
     """
     spread = _ramp(sentence_length_spread(text), *SPREAD_ANCHORS)
     ttr = _ramp(type_token_ratio(text), *TTR_ANCHORS)
-    punct = _ramp(punctuation_density(text), *PUNCT_ANCHORS)
+    # Unit 8, improvement 1: cap the punctuation component at PUNCT_ABSENCE_CAP.
+    # Expressive punctuation can still pull the score toward human, but its
+    # ABSENCE now counts as neutral instead of fully AI-typical. See the
+    # comment above PUNCT_ABSENCE_CAP for the diagnosis behind it.
+    punct = min(_ramp(punctuation_density(text), *PUNCT_ANCHORS), PUNCT_ABSENCE_CAP)
 
     score = (
         STYLE_WEIGHTS["spread"] * spread
@@ -232,6 +236,15 @@ TTR_ANCHORS = (0.95, 0.80)
 # Expressive punctuation per 100 words. Zero is AI-typical; 5 per 100 words
 # (one dash, question or quote every 20 words) is comfortably human.
 PUNCT_ANCHORS = (0.0, 5.0)
+
+# Unit 8, improvement 1. The before run showed that ALL seven human texts
+# wrongly labeled AI (FP01 to FP07), and four of my own five, had exactly zero
+# expressive punctuation. Plenty of plain human writing uses only full stops
+# and commas, so "none" can't tell a person from a model: clearly_ai.json has
+# none either. Capping the component at 0.5 makes absence neutral (it neither
+# accuses nor clears), while real dashes, quotes and questions still lower the
+# score toward human. Before this change the cap was effectively 1.0.
+PUNCT_ABSENCE_CAP = 0.5
 
 # TTR gets the smallest weight because its direction surprised me and rests on
 # three samples, and because formal human writing also has high TTR, which is
