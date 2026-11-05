@@ -640,6 +640,26 @@ it as built for unit 8, where I can measure the false positive and fix it.
 
 ---
 
+## Unit 8 Stretch Features (declared before building)
+
+I declared these on 2026-11-04, before turning on the rate limiter, running
+the attack set, or writing any of the code or attacks below.
+
+1. **Per-creator limits.** `/submit` is limited per `creator_id`
+   (5 per minute, 50 per day), falling back to the caller's address only when
+   a request has no usable `creator_id`. I'll show two creators sending from
+   the same address getting separate limits, and write what this catches that
+   per-address limiting misses and what it costs.
+2. **A second measured improvement.** After the first improvement and its
+   "after" run, I'll make a second change named by my diagnosis, and measure
+   it the same way: a third attack run and a third run log in the same
+   format, with a statement of whether it helped.
+3. **Three attacks on another team's system.** I'll write three attacks
+   against a classmate's Provenance Guard service and report what each one
+   did, naming the system attacked.
+
+---
+
 ## Rate Limiting
 
 **My limits:** **_ per minute, _** per day
