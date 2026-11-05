@@ -312,6 +312,11 @@ sets honest writers up to fail.
 | unsure                | above 0.35 and below 0.65           | We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.                                |
 | high-confidence AI    | 0.65 to 1.00 (0.65 itself is AI)    | This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it. |
 
+> **Unit 8 update:** these were the ranges in unit 7. Unit 8's second
+> improvement raised the AI threshold to 0.80, so unsure now covers above 0.35
+> and below 0.80, and high-confidence AI covers 0.80 to 1.00. The label text
+> didn't change. See The Improvement.
+
 The text lives in `scoring.py` (`LABEL_TEXT`), chosen by
 `scoring.py::score_to_label`. Each label was reached with a real submission:
 `samples/clearly_human.json` scored 0.2745 (human), `samples/borderline.json`
@@ -1569,6 +1574,229 @@ Total broken attacks stayed at 10, but which 10 changed: three fewer writers
 falsely accused, three more AI texts let through as "unsure". On a writing
 site that is the direction I want, because "unsure" makes no accusation,
 while the AI label does.
+
+### Second improvement (stretch): the AI threshold from 0.65 to 0.80
+
+**What I changed:** `AI_THRESHOLD` in `config.py`, from 0.65 to 0.80, on top
+of improvement 1. The unsure band is now 0.35 to 0.80, and the AI label covers
+0.80 to 1.00. The agreement guard in `scoring.py::combine_signals` caps at the
+threshold minus 0.01, so its cap moved with it, from 0.64 to 0.79. Nothing
+else changed.
+
+**Which diagnosis pointed at it:** what was left of problem 1 after
+improvement 1. FP02 to FP05 and my paragraphs 3 and 9 were still labeled AI at
+0.669 to 0.771, and the cause was signal one: gpt2 alone rated those formal,
+plain texts 0.74 to 0.83. That blind spot can't be tuned out of the signal,
+so the remaining lever was how much evidence the AI label demands.
+
+#### Attack Run — After improvement 2
+
+`python run_attacks.py --set attack_set --label after2`
+(`results/attack_run_2026-11-04_2103_after2.md`). The Note column gives the
+improvement-1 result wherever it changed.
+
+| ID | Family | Targeting | Status | Guess | Score | Verdict | Note |
+|---|---|---|---|---|---|---|---|
+| EV01 | evasion | signal two: typos raise word variety | 200 | unsure | 0.611 | **BROKE** |  |
+| EV02 | evasion | signal two: broken-up sentences raise length spread | 200 | unsure | 0.578 | **BROKE** |  |
+| EV03 | evasion | signal two: a pasted quotation changes the shape | 200 | unsure | 0.727 | **BROKE** | after improvement 1: ai 0.727 |
+| EV04 | evasion | signal one: unusual words raise perplexity | 200 | unsure | 0.785 | **BROKE** | after improvement 1: ai 0.785 |
+| EV05 | evasion | both signals: heavy human editing pass | 200 | unsure | 0.384 | **BROKE** |  |
+| EV06 | evasion | signal two: one very long sentence and one very short | 200 | unsure | 0.599 | **BROKE** |  |
+| EV07 | evasion | signal two: padding with punctuation | 200 | unsure | 0.670 | **BROKE** | after improvement 1: ai 0.670 |
+| EV08 | evasion | signal one: text below the token window | 400 | — | — | HELD | refused at 10 words; never scored |
+| EV09 | evasion | both: AI text with a human opening paragraph bolted on | 200 | unsure | 0.772 | **BROKE** | after improvement 1: ai 0.772 |
+| EV10 | evasion | signal two: repeated stanza structure | 200 | ai | 0.830 | HELD |  |
+| FP01 | false_positive | plain, clear human writing with no flourishes | 200 | unsure | 0.576 | HELD |  |
+| FP02 | false_positive | human writing in a formal register | 200 | unsure | 0.669 | HELD | after improvement 1: ai 0.669 |
+| FP03 | false_positive | a non-native English speaker writing carefully | 200 | unsure | 0.726 | HELD | after improvement 1: ai 0.726 |
+| FP04 | false_positive | a student essay written to a rubric | 200 | unsure | 0.771 | HELD | after improvement 1: ai 0.771 |
+| FP05 | false_positive | technical documentation written by a person | 200 | unsure | 0.700 | HELD | after improvement 1: ai 0.700 |
+| FP06 | false_positive | a person imitating a formal template | 200 | unsure | 0.668 | HELD | after improvement 1: unsure 0.640 |
+| FP07 | false_positive | human writing that repeats a phrase deliberately | 200 | unsure | 0.597 | HELD |  |
+| FP08 | false_positive | very short genuine human submission | 400 | — | — | HELD | 8 words, refused with a 400 |
+| PI01 | prompt_injection | instruction to ignore the check | 200 | unsure | 0.636 | **BROKE** |  |
+| PI02 | prompt_injection | instruction disguised as a system message | 200 | unsure | 0.558 | **BROKE** |  |
+| PI03 | prompt_injection | instruction wrapped in the writer's voice | 200 | unsure | 0.694 | **BROKE** | after improvement 1: ai 0.694 |
+| PI04 | prompt_injection | attempt to make the label text hostile | 200 | unsure | 0.500 | HELD | label text is fixed; nothing echoed back |
+| PI05 | prompt_injection | attempt to inject into the audit log | 400 | — | — | HELD | refused at 28 words; nothing injected |
+| PI06 | prompt_injection | instruction plus real human text | 200 | unsure | 0.551 | HELD | instruction did nothing; human text stays unsure |
+| MF01 | malformed | text is only whitespace | 400 | — | — | HELD | refused with a 400 |
+| MF02 | malformed | text is a single character | 400 | — | — | HELD | refused with a 400 |
+| MF03 | malformed | text is control characters | 400 | — | — | HELD | refused with a 400 |
+| MF04 | malformed | text is only punctuation | 400 | — | — | HELD | refused with a 400 |
+| MF05 | malformed | text is a very long single word | 400 | — | — | HELD | refused with a 400 |
+| MF06 | malformed | text is emoji only | 400 | — | — | HELD | refused with a 400 |
+| MF07 | malformed | text is right-to-left script | 400 | — | — | HELD | refused with a 400 |
+| MF08 | malformed | text is 60,000 characters | 400 | — | — | HELD | refused with a 400 |
+| RQ01 | malformed | no text field at all | 400 | — | — | HELD | refused with a 400 |
+| RQ02 | malformed | no creator_id | 400 | — | — | HELD | refused with a 400 |
+| RQ03 | malformed | text is a number | 400 | — | — | HELD | refused with a 400 |
+| RQ04 | malformed | text is a list | 400 | — | — | HELD | refused with a 400 |
+| RQ05 | malformed | text is null | 400 | — | — | HELD | refused with a 400 |
+| RQ06 | malformed | creator_id is an object | 400 | — | — | HELD | refused with a 400 |
+| RQ07 | malformed | body is a JSON array, not an object | 400 | — | — | HELD | refused with a 400 |
+| RQ08 | malformed | body is unparseable JSON | 400 | — | — | HELD | refused with a 400 |
+| RQ09 | malformed | body is empty | 400 | — | — | HELD | refused with a 400 |
+| RQ10 | malformed | body is form-encoded, not JSON | 429 | — | — | HELD | 429 on the shared-address bucket |
+| RQ11 | malformed | body is JSON claiming to be plain text | 429 | — | — | HELD | 429 on the shared-address bucket |
+| RQ12 | malformed | deeply nested JSON | 400 | — | — | HELD | refused with a 400 |
+| FL01_01 | flood_same_creator | 20 rapid submissions from one creator | 400 | — | — | HELD | refused with a 400 (counted) |
+| FL01_02 | flood_same_creator | 20 rapid submissions from one creator | 400 | — | — | HELD | refused with a 400 (counted) |
+| FL01_03 | flood_same_creator | 20 rapid submissions from one creator | 400 | — | — | HELD | refused with a 400 (counted) |
+| FL01_04 | flood_same_creator | 20 rapid submissions from one creator | 400 | — | — | HELD | refused with a 400 (counted) |
+| FL01_05 | flood_same_creator | 20 rapid submissions from one creator | 400 | — | — | HELD | refused with a 400 (counted) |
+| FL01_06 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_07 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_08 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_09 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_10 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_11 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+| FL01_12 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | rate limited after 5 |
+
+| Family | Attacks | Broke before | Broke after 1 | Broke after 2 |
+|---|---|---|---|---|
+| evasion | 10 | 2 | 4 | 8 (all but EV08 and EV10) |
+| false_positive | 8 | 7 | 4 | 0 |
+| prompt_injection | 6 | 1 | 2 | 3 (PI01, PI02, PI03) |
+| malformed | 20 | 0 | 0 | 0 |
+| flood_same_creator | 12 | 0 | 0 | 0 |
+| **Total** | **56** | **10** | **10** | **11** |
+
+#### Run Log — After improvement 2
+
+`python run_eval.py --label after2` (`results/run_2026-11-04_2105_after2.md`),
+`python run_appeals.py --label after2` (`results/appeals_2026-11-04_2105_after2.md`),
+and the JSON-list body by hand, in the same order and timing as the other two
+runs.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict | Before | After 1 |
+|---|---|---|---|---|---|---|---|
+| 1. My own writing is rarely called AI | at most 2 of 10 labeled `ai` | 0/10 | 0/10 | 0/10 | **MET** | 5/10 MISSED | 2/10 MET |
+| 2. Clearly-AI and clearly-human score far apart | gap of at least 0.30 | 0.539 | 0.539 | 0.539 | **MET** | 0.609 MET | 0.539 MET |
+| 3. All three labels are reachable | ai, unsure, human on the 3 samples | 3/3 | 3/3 | 3/3 | **MET** | MET | MET |
+| 4. Every appeal is recorded and changes status | 5 of 5 recorded, fake id 404 with no appeal entry | 5/5, 404 | 5/5, 404 | 5/5, 404 | **MET** | MET | MET |
+| 5. Bad input is refused cleanly | 7 of 7 bodies return 400, none 500, each logged | 7/7 | 7/7 | 6/7 (one 429) | **MISSED** | MISSED | MISSED |
+
+Criterion 3 is MET by a hair: `clearly_ai.json` scored 0.8137 against the new
+0.80 line, a margin of 0.014. Criterion 2's number didn't change (0.539), but
+my reason for 0.30 was that it matched the width of the unsure band, and the
+band is now 0.45 wide, so a 0.30 gap no longer guarantees that both samples
+can't sit inside it together.
+
+Criterion 1, trial 1, after improvement 2 (`run_eval.py::main` against
+`app.py::submit`):
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5259,
+    "model_score": 0.5643,
+    "style_score": 0.4874,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Few nations in the world share polarizing views among people in the wo"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5478,
+    "model_score": 0.3913,
+    "style_score": 0.7044,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Pakistan is considered by many in the West as two-faced, claiming that"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6937,
+    "model_score": 0.6715,
+    "style_score": 0.7159,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Others on the other hand see Pakistan as a land filled with vast cultu"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5871,
+    "model_score": 0.5793,
+    "style_score": 0.5949,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "The relations of these two nations are strained and tense, with their "
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5486,
+    "model_score": 0.6255,
+    "style_score": 0.4718,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "The histories of both nations have always been tied together, from Anc"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6331,
+    "model_score": 0.5645,
+    "style_score": 0.7016,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "However after the 1979 Iranian Revolution, with the Iranian Monarchy r"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5878,
+    "model_score": 0.5933,
+    "style_score": 0.5824,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "After 2001, with the fall of the Taliban, through proxy groups, Iran a"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6111,
+    "model_score": 0.6223,
+    "style_score": 0.6,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "With all this in mind one should consider the other side in this relat"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6736,
+    "model_score": 0.7288,
+    "style_score": 0.6184,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "It must also be stressed that, as cold as it sounds, a nation should p"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.3583,
+    "model_score": 0.2976,
+    "style_score": 0.419,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Even now Iran think of themselves as surrounded by their enemies, the "
+  }
+]
+```
+
+**Did it help, and how do I know:** It did what it was aimed at and made the
+detector close to useless as a detector, and the three result sets side by
+side show both. No human text in the attack set is labeled AI any more (7, then
+4, then 0), and none of my own paragraphs are (5, then 2, then 0). But AI text
+escaping the AI label went from 3, to 6, to 11 of the 12 scorable evasion and
+injection attacks. Only EV10, a repeated-stanza text at 0.830, is still caught.
+The total of broken attacks rose from 10 to 11, and almost every result is now
+"unsure", which is close to the system not answering at all.
+
+I'd keep improvement 1 and not ship improvement 2 as it stands. Improvement 1
+removed a wrong reason to accuse people at a modest cost. Improvement 2 removes
+the accusations by mostly removing the AI label, so the system is safer for
+writers only because it has stopped saying much. I'm leaving it in the
+repository because it's the last measured state, and What's Still Broken says
+what I'd do instead.
 
 ---
 

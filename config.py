@@ -116,7 +116,15 @@ MIN_AGREEING = 2
 # that decide who pays for it.
 
 HUMAN_THRESHOLD = 0.35
-AI_THRESHOLD = 0.65
+
+# Unit 8, improvement 2 (stretch): raised from 0.65 to 0.80, widening the
+# unsure band to 0.35-0.80. After improvement 1, four human texts in the
+# attack set (FP02 to FP05: formal, non-native, a rubric essay, technical
+# docs) and two of my own paragraphs still scored 0.67 to 0.77, because gpt2
+# alone rates plain, formal writing 0.74 to 0.83. A higher line means the AI
+# label needs stronger evidence. The agreement guard in combine_signals caps
+# at AI_THRESHOLD - 0.01, so it moves with this automatically (to 0.79).
+AI_THRESHOLD = 0.80
 
 # ⚠️ One thing that catches people out in Milestone 5. A weighted average can
 # only land between its two inputs — so while `style_signal` is still the stub
