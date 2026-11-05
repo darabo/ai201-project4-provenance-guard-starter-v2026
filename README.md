@@ -894,18 +894,351 @@ strongest label my system gives.
 <!-- Your five criteria across three trials. `run_eval.py --label before`. -->
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
-| --------- | ------ | ----- | ----- | ----- | ------- |
-| 1.        |        |       |       |       |         |
-| 2.        |        |       |       |       |         |
-| 3.        |        |       |       |       |         |
-| 4.        |        |       |       |       |         |
-| 5.        |        |       |       |       |         |
+|---|---|---|---|---|---|
+| 1. My own writing is rarely called AI | at most 2 of 10 labeled `ai` | 5/10 | 5/10 | 5/10 | **MISSED** |
+| 2. Clearly-AI and clearly-human score far apart | gap of at least 0.30 | 0.609 | 0.609 | 0.609 | **MET** |
+| 3. All three labels are reachable | ai, unsure, human on the 3 samples | 3/3 | 3/3 | 3/3 | **MET** |
+| 4. Every appeal is recorded and changes status | 5 of 5 recorded, fake id 404 with no appeal entry | 5/5, 404 | 5/5, 404 | 5/5, 404 | **MET** |
+| 5. Bad input is refused cleanly | 7 of 7 bodies return 400, none 500, each logged | 7/7 | 7/7 | 6/7 (one 429) | **MISSED** |
+
+How each was run, with nothing changed between trials:
+
+- Criteria 1, 2, 3 and six of criterion 5's seven bodies:
+  `python run_eval.py --label before`, which runs `scenarios.py` three times
+  (`results/run_2026-11-04_2053_before.md`).
+- Criterion 4: `python run_appeals.py --label before`, my extension of the
+  tooling, because an appeal needs a real content_id from a submission first
+  (`results/appeals_2026-11-04_2053_before.md`).
+- Criterion 5's seventh body, a JSON list, by hand with curl: `scenarios.py`'s
+  `validate()` only accepts dict bodies.
+
+All three trials were identical for criteria 1 to 4, as expected: nothing in
+any of my three signals is random.
+
+**How I decided each verdict:**
+
+1. MISSED: 5 of 10 in every trial against a target of at most 2. Paragraphs 3,
+   6, 7, 8 and 9 got `ai` every time.
+2. MET: `clearly_ai.json` scored 0.8838 and `clearly_human.json` 0.2745 in
+   every trial, a gap of 0.6093, about double the 0.30 target.
+3. MET: the three samples got `ai`, `unsure` and `human` in every trial.
+4. MET: all 5 appeals returned 200 with `under_review`, the log held each one
+   with the exact reasoning sent, and `c_doesnotexist` returned 404 and added no
+   appeal entry, in all three trials.
+5. MISSED: in trial 3 the JSON-list body got a 429 instead of a 400. It never
+   crashed and it did leave a `rejected` log entry (`rate_limited`), but my
+   target names a 400 for every body in every trial, and one trial fell short.
 
 **Real output from one trial**, pasted as text, naming the file and function
 that produced it:
 
-```json
+Criterion 1, trial 1 (`run_eval.py::main` against `app.py::submit`; scoring by
+`scoring.py::combine_signals`):
 
+```json
+[
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.535,
+    "model_score": 0.5643,
+    "style_score": 0.5056,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Few nations in the world share polarizing views among people in the wo"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5738,
+    "model_score": 0.3913,
+    "style_score": 0.7563,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Pakistan is considered by many in the West as two-faced, claiming that"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.7937,
+    "model_score": 0.6715,
+    "style_score": 0.9159,
+    "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+    "sent": "Others on the other hand see Pakistan as a land filled with vast cultu"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6071,
+    "model_score": 0.5793,
+    "style_score": 0.6349,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "The relations of these two nations are strained and tense, with their "
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.5486,
+    "model_score": 0.6255,
+    "style_score": 0.4718,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "The histories of both nations have always been tied together, from Anc"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.6664,
+    "model_score": 0.5645,
+    "style_score": 0.7683,
+    "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+    "sent": "However after the 1979 Iranian Revolution, with the Iranian Monarchy r"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.6879,
+    "model_score": 0.5933,
+    "style_score": 0.7824,
+    "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+    "sent": "After 2001, with the fall of the Taliban, through proxy groups, Iran a"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.7111,
+    "model_score": 0.6223,
+    "style_score": 0.8,
+    "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+    "sent": "With all this in mind one should consider the other side in this relat"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.7736,
+    "model_score": 0.7288,
+    "style_score": 0.8184,
+    "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+    "sent": "It must also be stressed that, as cold as it sounds, a nation should p"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.3583,
+    "model_score": 0.2976,
+    "style_score": 0.419,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Even now Iran think of themselves as surrounded by their enemies, the "
+  }
+]
+```
+
+Criterion 2, trial 1 (`run_eval.py::main`; AI sample first, human second):
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.8838,
+    "model_score": 0.7544,
+    "style_score": 0.9145,
+    "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+    "sent": "The importance of effective time management cannot be overstated in to"
+  },
+  {
+    "status": 200,
+    "guess": "human",
+    "confidence": 0.2745,
+    "model_score": 0.4445,
+    "style_score": 0.1044,
+    "label": "We think this was written by a person. Our check looks at writing patterns, so it can be wrong, but nothing here suggested an AI tool.",
+    "sent": "I didn't sleep. Not properly, anyway \u2014 I lay there listening to the bo"
+  }
+]
+```
+
+Criterion 3, trial 1 (`run_eval.py::main`):
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.8838,
+    "model_score": 0.7544,
+    "style_score": 0.9145,
+    "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wrote this yourself, you can ask for a person to review it.",
+    "sent": "The importance of effective time management cannot be overstated in to"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.4441,
+    "model_score": 0.3489,
+    "style_score": 0.5393,
+    "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it.",
+    "sent": "Time management matters more than people admit, especially now that wo"
+  },
+  {
+    "status": 200,
+    "guess": "human",
+    "confidence": 0.2745,
+    "model_score": 0.4445,
+    "style_score": 0.1044,
+    "label": "We think this was written by a person. Our check looks at writing patterns, so it can be wrong, but nothing here suggested an AI tool.",
+    "sent": "I didn't sleep. Not properly, anyway \u2014 I lay there listening to the bo"
+  }
+]
+```
+
+Criterion 4, trial 1 (`run_appeals.py::run_trial` against `app.py::appeal`):
+
+```json
+{
+  "appeals": [
+    {
+      "submit_status": 200,
+      "content_id": "c_45c048699454",
+      "appeal_status": 200,
+      "appeal_response": {
+        "appealed_at": "2026-11-05T01:53:17+00:00",
+        "content_id": "c_45c048699454",
+        "message": "Thank you. Your appeal has been recorded and this piece is now marked as under review. A person will read your explanation alongside our original result.",
+        "status": "under_review"
+      },
+      "log_has_appeal": true
+    },
+    {
+      "submit_status": 200,
+      "content_id": "c_517ab418078e",
+      "appeal_status": 200,
+      "appeal_response": {
+        "appealed_at": "2026-11-05T01:53:17+00:00",
+        "content_id": "c_517ab418078e",
+        "message": "Thank you. Your appeal has been recorded and this piece is now marked as under review. A person will read your explanation alongside our original result.",
+        "status": "under_review"
+      },
+      "log_has_appeal": true
+    },
+    {
+      "submit_status": 200,
+      "content_id": "c_1c0383650445",
+      "appeal_status": 200,
+      "appeal_response": {
+        "appealed_at": "2026-11-05T01:53:17+00:00",
+        "content_id": "c_1c0383650445",
+        "message": "Thank you. Your appeal has been recorded and this piece is now marked as under review. A person will read your explanation alongside our original result.",
+        "status": "under_review"
+      },
+      "log_has_appeal": true
+    },
+    {
+      "submit_status": 200,
+      "content_id": "c_3f14b507bc1d",
+      "appeal_status": 200,
+      "appeal_response": {
+        "appealed_at": "2026-11-05T01:53:17+00:00",
+        "content_id": "c_3f14b507bc1d",
+        "message": "Thank you. Your appeal has been recorded and this piece is now marked as under review. A person will read your explanation alongside our original result.",
+        "status": "under_review"
+      },
+      "log_has_appeal": true
+    },
+    {
+      "submit_status": 200,
+      "content_id": "c_dccfce6f225a",
+      "appeal_status": 200,
+      "appeal_response": {
+        "appealed_at": "2026-11-05T01:53:17+00:00",
+        "content_id": "c_dccfce6f225a",
+        "message": "Thank you. Your appeal has been recorded and this piece is now marked as under review. A person will read your explanation alongside our original result.",
+        "status": "under_review"
+      },
+      "log_has_appeal": true
+    }
+  ],
+  "passed": 5,
+  "fake_id": {
+    "status": 404,
+    "response": {
+      "error": "not_found",
+      "message": "No submission with content_id 'c_doesnotexist' exists."
+    },
+    "appeal_entries_added": 0
+  }
+}
+```
+
+Criterion 5, trial 3, the six dict bodies (`run_eval.py::main` against
+`app.py::submit` and `app.py::_check_submission`):
+
+```json
+[
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "(empty text)"
+  },
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "{\"creator_id\": \"eval_bad_missing\"}"
+  },
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "{\"text\": null, \"creator_id\": \"eval_bad_null\"}"
+  },
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "word word word word word word word word word word word word word word "
+  },
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "word word word word word word word word word word word word word word "
+  },
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "{\"text\": \"I didn't sleep. Not properly, anyway \\u2014 I lay there listening to the boiler tick and thinking about the th"
+  }
+]
+```
+
+Criterion 5, the JSON-list body by hand (`app.py::submit`, with the 429 from
+`app.py::rate_limited`):
+
+```
+$ curl -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" -d '["text", "creator_id"]'
+(sent three times, once per trial, right after run_eval.py's bad-input trials)
+
+trial 1 -> 400 {"error":"bad_request","message":"Send a JSON object like {\"text\": \"...\", \"creator_id\": \"...\"}."}
+trial 2 -> 400 {"error":"bad_request","message":"Send a JSON object like {\"text\": \"...\", \"creator_id\": \"...\"}."}
+trial 3 -> 429 {"error":"rate_limited","limit":"5 per 1 minute","message":"Too many submissions. Try again shortly."}
 ```
 
 **Diagnoses**
