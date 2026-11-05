@@ -480,6 +480,31 @@ The status is 400, and the log gains an entry with `"event": "rejected"`,
   positive) for unit 8 instead. The verified-writer demo below uses the
   course's human sample, labeled as such.
 
+**Moment 3 (unit 8): picking the worst outcome**
+
+- _What I asked for:_ After the first attack run, I asked Claude to help me
+  read the results and mark each attack held or broke.
+- _What came back:_ The marks, a diagnosis of each failure, and four
+  candidates for the single worst outcome, with FP03 (a non-native English
+  speaker, 0.826) listed first.
+- _What I changed:_ I picked FP04, the student essay written to a rubric,
+  instead. It scored highest of all the human texts (0.855), and it was
+  accused for doing exactly what the student was taught.
+
+**Moment 4 (unit 8): the second improvement and the trade**
+
+- _What I asked for:_ Before re-running anything, I asked Claude to estimate
+  what each candidate improvement would do, then had it make and measure
+  both.
+- _What came back:_ An offline estimate that matched the real runs: the
+  0.80 threshold would clear every false positive and let almost all the
+  dressed-up AI text through. The measured run confirmed it (11 of 12 escaped).
+- _What I changed:_ I didn't adopt the setting that made my own numbers look
+  best. Improvement 2 gave me 0 of 10 of my paragraphs labeled AI, but for my
+  production trade I chose a 0.70 line with human review instead. I also
+  dropped my third stretch item rather than claim it, because I never got
+  access to another team's service.
+
 ---
 
 ## Stretch Features: What I Built
@@ -662,6 +687,10 @@ the attack set, or writing any of the code or attacks below.
 3. **Three attacks on another team's system.** I'll write three attacks
    against a classmate's Provenance Guard service and report what each one
    did, naming the system attacked.
+
+   > **Dropped (2026-11-04):** I didn't get access to another team's running
+   > service, so I didn't build this one and I'm not claiming it. Items 1 and 2
+   > are built: see Rate Limiting and The Improvement.
 
 ---
 
@@ -1805,10 +1834,57 @@ what I'd do instead.
 <!-- For each attack still getting through and each criterion still missed:
      what you'd do, and why you stopped. -->
 
+As the repository stands (both improvements in), these still fail:
+
+**AI text escaping into "unsure": EV01 to EV07, EV09, PI01, PI02, PI03.**
+Most of these escaped because of improvement 2, not because the attacks
+got smarter: at 0.65 the threshold caught EV03, EV04, EV07, EV09 and PI03. What
+I'd do: set the line back near 0.70 and send AI results to a person (the
+trade below), then fix the two tricks the diagnosis named. For EV02, ignore
+sentences under three words when measuring sentence-length spread, so a
+string of "Really." can't fake human lumpiness. For PI02, score only the prose:
+drop lines that read as instructions to a system ("SYSTEM:", "Ignore all
+previous instructions") before gpt2 sees the text, and log that they were
+dropped. EV05 I'd leave as it is; after a rewrite that heavy, "unsure" is
+honest.
+
+**Criterion 5 (and RQ10, RQ11): the limiter answers before the route.** What
+I'd do: give requests with no usable `creator_id` their own, roomier address
+limit (around 20 a minute), or check the body's shape before the limiter so a
+malformed request always gets its 400. Either needs its own before-and-after
+run against criterion 5.
+
+**Formal and plain human writing (FP02 to FP05) is only protected by the
+threshold.** Their scores didn't fall far: 0.669 to 0.771, with gpt2 alone at
+0.74 to 0.83. If the line comes back down to 0.70, three of the four are
+labeled AI again (FP02 at 0.669 stays unsure). The real fix is upstream of
+anything I can tune: a stronger model than gpt2 for signal one, or human
+review before any AI label is shown.
+
+**Criterion 3 holds by 0.014.** `clearly_ai.json` scores 0.8137 against the
+0.80 line. A slightly different AI sample would fail it. At 0.70 the margin
+would be 0.11.
+
+**Not touched by this unit's runs:** the verified-writer gate from unit 7
+still refuses writers on the same detector that misjudges them, and
+per-creator limits can still be dodged by inventing a new `creator_id` per
+request (8 of 8 got through in my test).
+
+**Why I stopped:** the unit allows one improvement (plus the stretch one),
+because every extra change needs its own before-and-after run to mean
+anything. Each fix above changes a different stage, so making them all at once
+would leave me unable to say which one did what.
+
 **The trade I'd make if this ran for real:**
 
 <!-- Two sentences. Fewer wrong accusations means more AI text getting through.
      Say which way you'd go and WHO PAYS FOR IT. -->
+
+I'd set the AI line around 0.70 and never show the AI label automatically:
+anything that scores AI goes to a person first, and the writer only ever sees
+"unsure" or "human" unless that person agrees. The site pays for it in
+moderators' time, and flagged writers pay by waiting for a review, which costs
+them far less than a public accusation the site later has to take back.
 
 <!-- ═════════════════════════════════════════════════════════════════════
 
