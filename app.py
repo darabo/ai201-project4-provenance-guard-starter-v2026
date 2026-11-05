@@ -159,7 +159,10 @@ def health():
 # ── YOU BUILD THIS ────────────────────────────────────────────────────────────
 
 @app.post("/submit")
-# @limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
+# Unit 8: the rate limit. Flask-Limiter checks this BEFORE submit() runs; a
+# caller over the limit gets the 429 from rate_limited() above and never
+# reaches the signals. "5/minute;50/day" means both limits apply at once.
+@limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
 def submit():
     """
     Take a piece of text, decide about it, log the decision, answer.

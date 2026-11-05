@@ -662,7 +662,9 @@ the attack set, or writing any of the code or attacks below.
 
 ## Rate Limiting
 
-**My limits:** **_ per minute, _** per day
+**My limits:** 5 per minute, 50 per day, on `POST /submit` only
+(`config.py`: `RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_PER_DAY`; the decorator
+above `app.py::submit`).
 
 **Why those numbers and not others:**
 
@@ -671,17 +673,87 @@ the attack set, or writing any of the code or attacks below.
      thresholds. Your numbers have to be liveable for the first and hostile to
      the second. -->
 
+A real writer submits their own work a few times an hour, so 5 a minute never
+gets in their way, while a script probing where my thresholds sit gets only 5
+tries a minute. 50 a day is far more than anyone posting their own writing
+needs, and too few probes for one `creator_id` to map where the 0.35 and 0.65
+lines are. Ten a minute (the starter's number) would double a script's probing
+speed without helping any real writer.
+
 **What a caller counts as:** <!-- per address, or per creator_id? They fail
 differently — one script can look like a thousand callers, and one household
 can look like one. -->
+
+A `creator_id`. A request with no usable `creator_id` (missing, empty, or a
+body that isn't a JSON object) counts against the caller's address instead
+(`app.py::rate_limit_key`). Requests my route refuses with a 400 still count:
+the limiter runs before the route.
 
 **The run of status codes when I pushed past it:**
 
 <!-- python run_attacks.py --flood 15 -->
 
-```
+The course's flood test, `python run_attacks.py --flood 15`
+(`results/flood_2026-11-04_2021.md`):
 
 ```
+400 400 400 400 400 429 429 429 429 429 429 429 429 429 429
+```
+
+The first five are 400s, not 200s, because the flood script's text is 27
+words long and my route refuses anything under 40 words (criterion 5). The
+limiter still counted them, so requests 6 to 15 got 429. To show the limit
+with accepted requests, I sent the same 15-request burst with a valid 94-word
+text (`samples/clearly_human.json`) as `creator_id` `flood_valid_text`:
+
+```
+200 200 200 200 200 429 429 429 429 429 429 429 429 429 429
+```
+
+Each 429 left a rejection in the audit log:
+
+```json
+{
+  "timestamp": "2026-11-05T01:21:36+00:00",
+  "creator_id": "flood_valid_text",
+  "event": "rejected",
+  "status": "rejected",
+  "reason": "rate_limited",
+  "limit": "5 per 1 minute"
+}
+```
+
+### Per-creator limits (stretch)
+
+The limit is keyed to the `creator_id` rather than the address. The key
+function, `app.py::rate_limit_key`, came with the starter; my part was choosing
+it on purpose, setting the numbers, and testing what it does.
+
+**What it catches that per-address limiting misses:** one creator flooding from
+many addresses (different networks, a phone and a laptop) still hits the same
+5-a-minute bucket. And it doesn't punish people who share an address. Right
+after `flood_valid_text` was cut off, a second writer on the same machine got
+through:
+
+```
+flood_valid_text             -> 429 rate_limited
+second_writer_same_address   -> 200 human
+```
+
+Per address, a whole household, office, or school network behind one address
+would share 5 submissions a minute.
+
+**What it costs:** `creator_id` is whatever the caller types, so a script
+can invent a new one for every request. Eight requests from one address in
+the same minute, each with a new `creator_id`:
+
+```
+200 200 200 200 200 200 200 200
+```
+
+None were limited. Per-creator limiting only stops honest callers and lazy
+scripts. A real deployment would tie `creator_id` to a logged-in account, or
+keep a looser per-address limit as a backstop.
 
 ---
 
