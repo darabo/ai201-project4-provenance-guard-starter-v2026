@@ -2129,6 +2129,179 @@ So at a hundred people a day the processor is idle for all but about six
 seconds, and the cost that decides where this can run is the 1,000 MB of
 memory held all day.
 
+**Run Log and Verdicts**
+
+The five capstone criteria are in [criteria.md](criteria.md) under "Capstone
+criteria (unit 9)". They were committed on their own in `dab6067`, before any
+trial was run. Everything below comes from one command, run against commit
+`2d276f8`:
+
+```bash
+python run_capstone.py --label before
+```
+
+How the test runs, so the numbers can be judged:
+
+- `run_capstone.py` starts the service itself with the command from
+  RUNNING.md and restarts it before each criterion, so one criterion's
+  requests cannot use up another's rate-limit allowance. Inside a criterion
+  the three trials run back to back against the same running service.
+- Criterion 1 cloned this repository's folder, not the GitHub URL, because
+  the capstone commits were not pushed yet. Every other line of the
+  RUNNING.md block ran as written.
+- A criterion is MET only when all three trials reach the target.
+
+The full output of all fifteen trials is in
+`results/capstone_2026-11-11_2136_before.md`.
+
+Run Log, before:
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Reproducible local run path | 2 of 2 checks (health, submit) per clean start | 2/2 | 2/2 | 2/2 | MET |
+| 2. Complete structured run logging | 10 of 10 requests | 9/10 | 9/10 | 9/10 | MISSED |
+| 3. Bad submission input is rejected and logged | 5 of 5 bodies | 5/5 | 5/5 | 5/5 | MET |
+| 4. Warm submissions remain responsive | 9 of 10 within 500 ms | 10/10 | 10/10 | 10/10 | MET |
+| 5. Appeals preserve the original evidence | 4 of 4 checks | 4/4 | 4/4 | 4/4 | MET |
+
+Real output, trial 1 of each criterion.
+
+Criterion 1. Produced by `run_capstone.py::criterion_1`, which runs the
+"From a clean checkout" block of RUNNING.md in an empty folder, then calls
+`app.py::health` and `app.py::submit` on the service that block started. The
+three clean starts took 26.7, 28.2 and 24.4 seconds to reach
+`Booting worker with pid`.
+
+```text
+source cloned: /Users/darabonakdar/ai201-project4-provenance-guard-starter-v2026
+'Booting worker with pid' seen after 26.7s
+last lines of the start output:
+  perplexity     12.5
+  model_signal   0.8864   (higher = more likely AI)
+  [2026-11-11 21:35:27 -0500] [17651] [INFO] Starting gunicorn 23.0.0
+  [2026-11-11 21:35:27 -0500] [17651] [INFO] Listening at: http://127.0.0.1:5000 (17651)
+  [2026-11-11 21:35:27 -0500] [17651] [INFO] Using worker: sync
+  [2026-11-11 21:35:27 -0500] [17687] [INFO] Booting worker with pid: 17687
+GET /health -> 200 {"detector_loaded": false, "detector_model": "gpt2", "log_entries": 575, "ok": true, "rate_limiting": true}
+POST /submit -> 200 {"confidence": 0.8137, "content_id": "c_7b79071cd586", "creator_id": "demo_instructor", "guess": "ai", "label": "This reads very much like text written by an AI tool. Our check can be wrong. If you wr
+last record in the clone's logs/runs.jsonl:
+  {"timestamp": "2026-11-12T02:35:27.731+00:00", "request_id": "r_0b30a6949ec0", "method": "POST", "path": "/submit", "input": {"body_bytes": 725, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "demo_instructor", "text_chars": 680, "text_words": 91, "text_preview": "The importance of effective time management cannot be overst"}, "output": {"status_code": 200, "content_id": "c_7b79071cd586", "guess": "ai", "confidence": 0.8137, "model_score": 0.7544, "style_score": 0.7145, "marker_score": 0.9943, "status": "decided"}, "outcome": "ok", "duration_ms": 2248.7, "cpu_ms": 1583.8, "cold_start": true, "stages_ms": {"model": 2247.0, "style": 0.2, "markers": 0.2, "scoring": 0.0}}
+```
+
+Criterion 2. Produced by `run_capstone.py::criterion_2`. Each record it
+quotes was written by `app.py::_write_run_record` through `runlog.py::write`.
+
+```text
+ 1. GET /health -> 200  r_319de5bacbd3  ok
+ 2. POST /submit -> 200  r_ac7fb41ff53f  ok
+ 3. POST /submit -> 200  r_536e192607fc  ok
+ 4. POST /submit -> 200  r_b1978c40682b  ok
+ 5. POST /submit -> 200  r_f024ef0294ec  ok
+ 6. POST /submit -> 400  r_19068964b076  ok
+ 7. POST /submit -> 400  r_f12685745cf2  ok
+ 8. POST /appeal -> 200  r_17187aa1a9bc  ok
+ 9. POST /appeal -> 404  r_9e58a5832dea  ok
+10. GET /submitt -> 404  r_5b1241aaba3f  FAIL: output has no error
+    {"timestamp": "2026-11-12T02:36:36.724+00:00", "request_id": "r_5b1241aaba3f", "method": "GET", "path": "/submitt", "input": {"body_bytes": 0, "body_type": "empty"}, "output": {"status_code": 404}, "outcome": "rejected", "duration_ms": 0.1, "cpu_ms": 0.1, "cold_start": false}
+```
+
+Criterion 3. Produced by `run_capstone.py::criterion_3`. The 400s come from
+`app.py::_check_submission`.
+
+```text
+missing text: -> 400 {"error": "bad_request", "message": "The \"text\" field is required and must be a string."}  ok
+    {"timestamp": "2026-11-12T02:36:38.321+00:00", "request_id": "r_30562a1abb0d", "method": "POST", "path": "/submit", "input": {"body_bytes": 34, "body_type": "object", "fields": ["creator_id"], "creator_id": "c3_3133e8_trial1"}, "output": {"status_code": 400, "error": "bad_request"}, "outcome": "rejected", "duration_ms": 0.7, "cpu_ms": 0.8, "cold_start": true}
+empty text: -> 400 {"error": "bad_request", "message": "The \"text\" field is empty."}  ok
+    {"timestamp": "2026-11-12T02:36:38.324+00:00", "request_id": "r_7be1819eca1e", "method": "POST", "path": "/submit", "input": {"body_bytes": 46, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "c3_3133e8_trial1", "text_chars": 0, "text_words": 0, "text_preview": ""}, "output": {"status_code": 400, "error": "bad_request"}, "outcome": "rejected", "duration_ms": 0.3, "cpu_ms": 0.3, "cold_start": true}
+whitespace-only text: -> 400 {"error": "bad_request", "message": "The \"text\" field is empty."}  ok
+    {"timestamp": "2026-11-12T02:36:38.327+00:00", "request_id": "r_b66523e6f1d7", "method": "POST", "path": "/submit", "input": {"body_bytes": 49, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "c3_3133e8_trial1", "text_chars": 3, "text_words": 0, "text_preview": "   "}, "output": {"status_code": 400, "error": "bad_request"}, "outcome": "rejected", "duration_ms": 0.3, "cpu_ms": 0.3, "cold_start": true}
+non-string text: -> 400 {"error": "bad_request", "message": "The \"text\" field is required and must be a string."}  ok
+    {"timestamp": "2026-11-12T02:36:38.329+00:00", "request_id": "r_62545b7e8d07", "method": "POST", "path": "/submit", "input": {"body_bytes": 49, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "c3_3133e8_trial1"}, "output": {"status_code": 400, "error": "bad_request"}, "outcome": "rejected", "duration_ms": 0.3, "cpu_ms": 0.3, "cold_start": true}
+JSON array: -> 400 {"error": "bad_request", "message": "Send a JSON object like {\"text\": \"...\", \"creator_id\": \"...\"}."}  ok
+    {"timestamp": "2026-11-12T02:36:38.331+00:00", "request_id": "r_dd9f71e56ddc", "method": "POST", "path": "/submit", "input": {"body_bytes": 9, "body_type": "list"}, "output": {"status_code": 400, "error": "bad_request"}, "outcome": "rejected", "duration_ms": 0.2, "cpu_ms": 0.2, "cold_start": true}
+```
+
+Criterion 4. Produced by `run_capstone.py::criterion_4`. `duration_ms` is
+measured in `app.py::_start_run_record` and `app.py::_build_run_record`.
+
+```text
+warm-up -> 200, duration_ms 2203.4, cold_start True
+GET /health -> detector_loaded: True
+ 1. 86 words -> 200, duration_ms 47.8, within
+    {"timestamp": "2026-11-12T02:36:41.446+00:00", "request_id": "r_e9d849ee0556", "method": "POST", "path": "/submit", "input": {"body_bytes": 549, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "c4_3133e8_t1_00", "text_chars": 494, "text_words": 86, "text_preview": "Few nations in the world share polarizing views among people"}, "output": {"status_code": 200, "content_id": "c_a1629da39dfd", "guess": "unsure", "confidence": 0.5259, "model_score": 0.5643, "style_score": 0.4874, "marker_score": 0.0, "status": "decided"}, "outcome": "ok", "duration_ms": 47.8, "cpu_ms": 66.3, "cold_start": false, "stages_ms": {"model": 46.1, "style": 0.1, "markers": 0.1, "scoring": 0.0}}
+ 2. 51 words -> 200, duration_ms 33.8, within
+ 3. 62 words -> 200, duration_ms 39.9, within
+ 4. 48 words -> 200, duration_ms 34.0, within
+ 5. 54 words -> 200, duration_ms 38.4, within
+ 6. 58 words -> 200, duration_ms 38.2, within
+ 7. 78 words -> 200, duration_ms 41.6, within
+ 8. 54 words -> 200, duration_ms 32.7, within
+ 9. 83 words -> 200, duration_ms 45.3, within
+10. 42 words -> 200, duration_ms 32.1, within
+```
+
+Criterion 5. Produced by `run_capstone.py::criterion_5`. The appeal is
+`app.py::appeal`, the audit entries are written by `audit.py::log_decision`
+and `audit.py::log_appeal`, and the status read-back is `app.py::get_content`.
+
+```text
+POST /submit -> 200 {"content_id": "c_bb796c445be8", "guess": "unsure", "confidence": 0.5478, "model_score": 0.3913, "style_score": 0.7044}
+POST /appeal -> 200 {"appealed_at": "2026-11-12T02:36:46+00:00", "content_id": "c_bb796c445be8", "message": "Thank you. Your appeal has been recorded and this piece is now marked a
+    audit: {"combined_score": 0.5478, "content_id": "c_bb796c445be8", "creator_id": "c5_3133e8_t1", "guess": "unsure", "label": "We couldn't tell either way whether this was written by a person or an AI tool, so we're not making a call on it
+    audit: {"content_id": "c_bb796c445be8", "creator_id": "c5_3133e8_t1", "event": "appeal", "reasoning": "I wrote this myself for a history class.", "status": "under_review", "timestamp": "2026-11-12T02:36:46+00:00"}
+GET /content/c_bb796c445be8 -> 200 {"status": "under_review", "confidence": 0.5478, "model_score": 0.3913, "style_score": 0.7044}
+```
+
+Verdicts, each against the target in criteria.md:
+
+1. **MET.** All three clean starts returned 200 with `"ok": true` from
+   `GET /health` and 200 from `POST /submit`.
+2. **MISSED.** The target is 10 of 10 requests in every session. Each session
+   scored 9 of 10.
+3. **MET.** All five invalid bodies returned 400 with a JSON `error` in every
+   trial, none returned a 5xx, and each left one `rejected` record with status
+   400, an error code and a duration.
+4. **MET.** The target is at least 9 of 10 within 500 ms. All 30 requests were
+   within it. The spread of `duration_ms` was trial 1: 32.1 to 47.8 ms; trial 2: 32.7 to 47.1 ms; trial 3: 35.0 to 49.8 ms, so the slowest
+   request (49.8 ms) used about a tenth of the allowance.
+5. **MET.** In every trial the appeal returned 200 with `under_review`, the
+   audit log held the decision followed by the appeal, and
+   `GET /content/<id>` showed the original scores and label with status
+   `under_review`.
+
+Diagnosis of the one miss, criterion 2.
+
+The same request failed in all three sessions: request 10, `GET /submitt`,
+the mistyped URL. Its record exists, matches its `X-Request-ID` exactly once
+and has all eight required fields. What it lacks is the error code: its
+`output` is `{"status_code": 404}` and nothing else, where the criterion
+requires `output.error` on every 4xx.
+
+The stage is the run log's summary of what went out:
+`runlog.py::summarize_output`, called from `app.py::_write_run_record`.
+
+The mechanism: `summarize_output` gets the error code by copying the `error`
+field out of the response's JSON body. That works for every refusal my own
+routes write, because they all answer with JSON like
+`{"error": "bad_request", ...}`. A URL that matches no route never reaches
+any of my routes. Flask answers it by itself with an HTML "Not Found" page,
+`response.get_json(silent=True)` returns `None` for HTML, and there is no body
+to copy an error code from.
+
+Request 9 in the same session shows the difference. It is also a 404 (an
+appeal against `c_doesnotexist`) and it passed, because that 404 is written by
+`app.py::appeal` as JSON with `"error": "not_found"`. So the gap is in
+responses Flask writes for me, and the status code alone does not predict it.
+By the same code path a request with the wrong method (Flask's own 405) would
+lose its error code too. I have not tested that.
+
+The three sessions scored an identical 9 of 10 because nothing about this
+failure involves the model or chance: the same URL takes the same path every
+time. The request ids and timestamps differ in each session
+(`r_5b1241aaba3f` in session 1), so the sessions were three separate runs.
+
+There is one miss and one cause, so there is no wider pattern to report.
+
 ---
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
