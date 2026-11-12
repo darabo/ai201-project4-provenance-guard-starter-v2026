@@ -8,6 +8,134 @@ assumed — the starter ships one that already answers.
 
 ---
 
+## The capstone run path (unit 9)
+
+This section is the run path for the capstone. Everything below it is the
+starter's guide from units 7 and 8, kept as it was.
+
+**Path B: local, with logs.** The service runs on one machine, started by one
+command, and every request it answers leaves a record in `logs/runs.jsonl`.
+
+### The start command
+
+From the repository folder, with the virtual environment active:
+
+```bash
+gunicorn app:app --bind 127.0.0.1:5000 --workers 1 --timeout 120
+```
+
+What each part does:
+
+| Part | Meaning |
+|---|---|
+| `gunicorn` | A production web server for Python. It replaces Flask's built-in development server, which is what `python app.py` uses |
+| `app:app` | "In the file `app.py`, serve the object named `app`" |
+| `--bind 127.0.0.1:5000` | Listen on this machine only (`127.0.0.1` is the loopback address), on port 5000 |
+| `--workers 1` | One worker process. The rate-limit counts and the loaded model live in that process's memory, so a second worker would keep its own separate counts and load a second copy of gpt2 |
+| `--timeout 120` | Give a request up to 120 seconds before the worker is restarted. The default is 30, and the first submission after a start has to load the model, which can take longer than that on a slow disk |
+
+Stop it with Ctrl+C.
+
+### What the environment needs
+
+| Thing | What I ran it on | Notes |
+|---|---|---|
+| Operating system | macOS 27.2, Apple M5 Pro, 48 GB RAM | `gunicorn` does not run on Windows. There, `python app.py` starts the same service and writes the same run log |
+| Python | 3.13.9 | `requirements.txt` supports 3.11, 3.12 and 3.13, and not 3.14 |
+| Disk for packages | 947 MB | Size of `.venv` after `pip install`, almost all of it `torch` |
+| Model file | `gpt2`, 525 MB | Downloaded once from Hugging Face by `python detector.py` into `~/.cache/huggingface/hub/models--gpt2` |
+| Memory while running | about 1,000 MB | Measured with `ps`: the worker holds 39 MB before the first submission and 984 to 1,051 MB once gpt2 is loaded |
+| API keys, accounts | none | After the model download, nothing here uses the network |
+
+The dependencies, with the range `requirements.txt` allows and the exact
+version installed when I ran it:
+
+| Package | Allowed range | Version I ran |
+|---|---|---|
+| flask | `>=3.0,<4.0` | 3.1.3 |
+| flask-limiter | `>=3.5,<4.0` | 3.12 |
+| requests | `>=2.31,<3.0` | 2.34.2 |
+| transformers | `>=4.44,<5.0` | 4.57.6 |
+| torch | `>=2.2,<3.0` | 2.15.0 |
+| gunicorn | `>=21.2,<24.0` | 23.0.0 |
+| certifi | `>=2026.10.19` | 2026.10.23 |
+
+### From a clean checkout
+
+```bash
+git clone https://github.com/darabo/ai201-project4-provenance-guard-starter-v2026.git
+cd ai201-project4-provenance-guard-starter-v2026
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python detector.py
+gunicorn app:app --bind 127.0.0.1:5000 --workers 1 --timeout 120
+```
+
+`python detector.py` is the step that downloads the 525 MB model. Skip it and
+the service still starts, but the first submission has to do the download.
+
+Then, in a second terminal (activate the virtual environment there too):
+
+```bash
+curl http://127.0.0.1:5000/health
+```
+
+A running service answers with JSON that starts `{"detector_loaded":false,`.
+`detector_loaded` turns `true` after the first submission.
+
+Send one submission and read back its run record:
+
+```bash
+curl -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" -d @samples/clearly_ai.json
+```
+
+```bash
+python runlog.py --tail 1
+```
+
+The first submission after a start is the slow one (about 2 to 3 seconds here)
+because it loads gpt2. Its record says `"cold_start": true`. Later ones take
+about 40 milliseconds.
+
+### The run record
+
+| File | What it is |
+|---|---|
+| `logs/runs.jsonl` | One JSON object per line, one line per HTTP request. Written by `runlog.py`. **Committed**, like the audit log |
+| `python runlog.py --tail 10` | Print the last ten records |
+| `python runlog.py --count` | How many records, split into ok, rejected and error |
+| `python measure_cost.py` | Send ten submissions and report the compute time per run |
+
+### What went wrong when I followed this in a fresh clone
+
+I cloned the repository into an empty folder, made a new virtual environment
+and followed the steps above. The install and the start worked. Two things
+would have stopped a reader on a Mac:
+
+- **Port 5000 answers even when the service is down.** macOS runs AirPlay
+  Receiver on port 5000. My first health check went out before `gunicorn` had
+  finished starting and came back `403 Forbidden` with the header
+  `Server: AirTunes`. That is AirPlay, and it looks like the service refusing
+  the request. Wait for the line `Booting worker with pid` before sending
+  anything, and treat any reply that is not JSON as "not my service".
+- **`localhost` is not the same as `127.0.0.1` here.** `curl
+  http://localhost:5000/ping` got the AirPlay 403 while the service was up,
+  because `localhost` tried the IPv6 address first and `gunicorn` is bound to
+  the IPv4 one. Every command in this section uses `127.0.0.1` for that reason.
+
+One thing this test could not cover: gpt2 was already in my Hugging Face cache
+from unit 7, so the clone did not exercise the 525 MB download.
+
+### Why this is not hosted
+
+A free host gives 512 MB of memory. This service needs about 1,000 MB once the
+model is loaded (the measurement in the table above), so it would be killed on
+its first submission. The starter's own arithmetic for this is in "This
+project will not fit a free host" further down.
+
+---
+
 ## Before your first class
 
 ```bash
