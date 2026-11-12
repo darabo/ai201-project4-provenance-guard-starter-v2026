@@ -2302,6 +2302,93 @@ time. The request ids and timestamps differ in each session
 
 There is one miss and one cause, so there is no wider pattern to report.
 
+**The Improvement**
+
+What I changed: one function, `runlog.py::summarize_output`, plus a small
+helper beside it, `runlog.py::error_code_for`. When a response has status 400
+or above and its body supplied no `error`, the run log now derives an error
+code from the HTTP status (`404` becomes `not_found`, `405` becomes
+`method_not_allowed`) and adds `"error_source": "http_status"` to mark the
+code as derived. Nothing the service sends back to a caller changed.
+
+Why this change: it is aimed at the mechanism in the diagnosis above.
+Criterion 2 missed because `summarize_output` could only copy an error code
+out of a JSON body, and the response Flask writes for an unknown URL is HTML.
+The fix gives that function a second source for the code, so it no longer
+depends on who wrote the response.
+
+Then I re-ran the full set, three trials each, with the same command and
+`--label after`. Full output: `results/capstone_2026-11-11_2144_after.md`.
+
+Run Log, before (from `results/capstone_2026-11-11_2136_before.md`):
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Reproducible local run path | 2 of 2 checks (health, submit) per clean start | 2/2 | 2/2 | 2/2 | MET |
+| 2. Complete structured run logging | 10 of 10 requests | 9/10 | 9/10 | 9/10 | MISSED |
+| 3. Bad submission input is rejected and logged | 5 of 5 bodies | 5/5 | 5/5 | 5/5 | MET |
+| 4. Warm submissions remain responsive | 9 of 10 within 500 ms | 10/10 | 10/10 | 10/10 | MET |
+| 5. Appeals preserve the original evidence | 4 of 4 checks | 4/4 | 4/4 | 4/4 | MET |
+
+Run Log, after:
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Reproducible local run path | 2 of 2 checks (health, submit) per clean start | 2/2 | 2/2 | 2/2 | MET |
+| 2. Complete structured run logging | 10 of 10 requests | 10/10 | 10/10 | 10/10 | MET |
+| 3. Bad submission input is rejected and logged | 5 of 5 bodies | 5/5 | 5/5 | 5/5 | MET |
+| 4. Warm submissions remain responsive | 9 of 10 within 500 ms | 10/10 | 10/10 | 10/10 | MET |
+| 5. Appeals preserve the original evidence | 4 of 4 checks | 4/4 | 4/4 | 4/4 | MET |
+
+Request 10 of session 1, before:
+
+```text
+10. GET /submitt -> 404  r_5b1241aaba3f  FAIL: output has no error
+    {"timestamp": "2026-11-12T02:36:36.724+00:00", "request_id": "r_5b1241aaba3f", "method": "GET", "path": "/submitt", "input": {"body_bytes": 0, "body_type": "empty"}, "output": {"status_code": 404}, "outcome": "rejected", "duration_ms": 0.1, "cpu_ms": 0.1, "cold_start": false}
+```
+
+Request 10 of session 1, after (the summary line from
+`run_capstone.py::criterion_2`, then its record from `logs/runs.jsonl`):
+
+```text
+10. GET /submitt -> 404  r_53d8518017d4  ok
+    {"timestamp": "2026-11-12T02:44:26.258+00:00", "request_id": "r_53d8518017d4", "method": "GET", "path": "/submitt", "input": {"body_bytes": 0, "body_type": "empty"}, "output": {"status_code": 404, "error": "not_found", "error_source": "http_status"}, "outcome": "rejected", "duration_ms": 0.1, "cpu_ms": 0.1, "cold_start": false}
+```
+
+Did it help: yes. Criterion 2 went from 9 of 10 in every session to 10 of 10
+in every session, and the request that changed is the one the diagnosis
+named. The record for `GET /submitt` now carries `"error": "not_found"`. The
+other four criteria came out the same as before, so the change broke nothing
+that I measure.
+
+What it cost elsewhere:
+
+- The derived code is generic. An unknown URL and an appeal against an
+  unknown `content_id` now both log `"error": "not_found"`. They can still be
+  told apart by `path` and by `error_source`, which is only present on the
+  derived one, but a search of the log for `not_found` alone now returns both.
+- Time: I can't show a cost, and I can't rule out a small one. Criterion 4's
+  `duration_ms` over its 30 requests was 32.1 to 49.8 ms (mean 39.0) before
+  and 33.4 to 83.4 ms (mean 42.3) after. The 83.4 ms is one request (trial
+  1, request 9, 83 words); the next slowest after-run request took
+  54.2 ms. For a 200 response the fix adds a single comparison, so I
+  read the difference as run-to-run variation, but one run of each is not
+  enough to prove that.
+- The log is append-only, so the four unknown-URL records written before the
+  fix stay as they were, without an error code.
+
+What the after run does not show:
+
+- Criterion 1's three clean starts cloned the last commit (`72aef9a`), and the
+  fix was not committed yet when I ran it. Those clones ran the code from
+  before the fix. Criterion 1 only checks `GET /health` and one `POST /submit`,
+  which the fix does not touch.
+- The 405 case is covered by a direct call only: `summarize_output(405, None)`
+  returns `method_not_allowed`. I did not send a wrong-method request through
+  the running service.
+- `run_capstone.py` changed between the two runs in one place: the report's
+  "Code tested" line now names any uncommitted `.py` files. No check changed.
+
 ---
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
