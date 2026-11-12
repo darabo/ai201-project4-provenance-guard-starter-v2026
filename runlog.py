@@ -149,7 +149,39 @@ def summarize_output(status_code: int, body) -> dict:
         for field in _OUTPUT_FIELDS:
             if field in body:
                 summary[field] = body[field]
+
+    # Unit 9 improvement (capstone criterion 2). Every refusal or failure
+    # must carry an error code. The routes in app.py put one in their JSON
+    # body, and the loop above copies it. But some responses are written by
+    # Flask itself and are HTML pages with no JSON at all: an unknown URL
+    # (404), the wrong method for a route (405), an unhandled crash (500).
+    # Before this change those were logged with a status code and nothing
+    # else. Now a code is derived from the status whenever the body didn't
+    # supply one. "error_source" marks it as derived, so the log still shows
+    # whether the service named the error or the status code did.
+    if status_code >= 400 and "error" not in summary:
+        summary["error"] = error_code_for(status_code)
+        summary["error_source"] = "http_status"
     return summary
+
+
+def error_code_for(status_code: int) -> str:
+    """
+    A short error code made from an HTTP status number.
+
+    Python's standard library knows the official name of every status code:
+    HTTPStatus(404).phrase is "Not Found". Lower-casing it and swapping
+    spaces and hyphens for underscores gives `not_found`, the same style as
+    the codes the routes write by hand (`bad_request`, `rate_limited`).
+    A number the library doesn't recognise becomes e.g. `http_499`.
+    """
+    from http import HTTPStatus
+
+    try:
+        phrase = HTTPStatus(status_code).phrase
+    except ValueError:
+        return f"http_{status_code}"
+    return phrase.lower().replace(" ", "_").replace("-", "_")
 
 
 def outcome_for(status_code: int) -> str:

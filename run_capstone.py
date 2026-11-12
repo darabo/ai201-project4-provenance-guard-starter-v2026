@@ -576,6 +576,15 @@ def write_report(results: dict[int, list[dict]], args, tag: str):
     # prints the short id of the current commit.
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO,
                             capture_output=True, text=True).stdout.strip() or "unknown"
+    # A commit id only describes the code if nothing has been edited since.
+    # `git status --porcelain -- "*.py"` lists Python files that differ from
+    # that commit, one per line, like " M runlog.py". If there are any, the
+    # report names them, so it never claims to have tested code it didn't.
+    changed = subprocess.run(["git", "status", "--porcelain", "--", "*.py"], cwd=REPO,
+                             capture_output=True, text=True).stdout.splitlines()
+    if changed:
+        # Each line is a two-character status, a space, then the file name.
+        commit += "` plus uncommitted changes to `" + ", ".join(line[3:] for line in changed)
 
     table = ["| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |", "|---|---|---|---|---|---|"]
     for number, trials in results.items():
