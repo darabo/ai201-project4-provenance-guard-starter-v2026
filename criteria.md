@@ -147,3 +147,109 @@ could never find later.
      A number you missed stays where it is, gets diagnosed, and gets a fix
      attempted. That's where the points are.
      ───────────────────────────────────────────────────────────────────────── -->
+
+---
+
+# Capstone criteria (unit 9)
+
+Five criteria for the unit 9 capstone, written before any trial was run. The
+five above this heading are the unit 7 criteria and are left as they were.
+
+## 1. Reproducible local run path
+
+For each of 3 independent starts from a fresh checkout (three separate clones,
+each into an empty folder with a new virtual environment; gpt2 may come from
+the existing Hugging Face cache), a reader can follow only `RUNNING.md` to
+create the documented Python environment, install the required dependencies
+and model, and start Provenance Guard. Each start must return `200` with
+`"ok": true` from `GET /health`, sent after gunicorn prints
+`Booting worker with pid`, followed by a `200` response to one valid
+`POST /submit` request (the `samples/clearly_ai.json` command in `RUNNING.md`).
+
+**Why this target:** Provenance Guard runs a local GPT-2 detector, so a
+documented local-with-logs path is more realistic than a free hosted
+deployment. Three clean starts test that the service is reproducible rather
+than merely working in my existing development environment.
+
+---
+
+## 2. Complete structured run logging
+
+In each of 3 sessions of 10 requests, every response’s `X-Request-ID` appears
+in exactly one record in `logs/runs.jsonl`. Each matching record includes
+`timestamp`, `request_id`, `method`, `path`, `input`, `output`, `outcome`, and
+`duration_ms`. For successful decisions (a `200` from `POST /submit`), `output`
+includes the `content_id`, `guess`, and `confidence`; for rejected requests
+(any 4xx response), it includes the HTTP status (`output.status_code`) and
+error code (`output.error`).
+
+The 10 requests in a session, sent in this order, with `creator_id`s that have
+not been used earlier in that minute:
+
+1. `GET /health`
+2. `POST /submit` with paragraph 1 of `scenarios.MY_OWN_WRITING`
+3. `POST /submit` with paragraph 2, from a second `creator_id`
+4. `POST /submit` with paragraph 3, from a third `creator_id`
+5. `POST /submit` with paragraph 4, from a fourth `creator_id`
+6. `POST /submit` with `"text": ""`
+7. `POST /submit` with the JSON array `[1, 2, 3]` as the body
+8. `POST /appeal` with the `content_id` returned by request 2 and a non-empty
+   `reasoning`
+9. `POST /appeal` with the `content_id` `c_doesnotexist`
+10. `GET /submitt` (a mistyped URL)
+
+**Why this target:** Provenance Guard makes an attribution decision that a
+writer may need to challenge. Complete records make it possible to investigate
+both classifications and rejected requests afterward instead of treating
+missing evidence as a quiet system.
+
+---
+
+## 3. Bad submission input is rejected and logged
+
+In each of 3 trials, all 5 deliberately invalid `POST /submit` bodies—missing
+`text`, empty `text` (`""`), whitespace-only `text` (three spaces), non-string
+`text` (the number `12345`), and a JSON array instead of an object—return `400`
+with a JSON `error` field and never return a `5xx`. Each rejection produces one
+run-log record with `outcome: "rejected"`, `output.status_code: 400`, an error
+code, and `duration_ms`. Every body except the array carries a `creator_id`
+that has not been used before in that trial's minute (for example `c3_trial1`),
+and the three trials run back to back with no pause between them.
+
+**Why this target:** The project specifically accepts writer-submitted text,
+and malformed input must not crash the service or disappear from the record.
+These five cases cover absent, unusable, and incorrectly shaped request data.
+
+---
+
+## 4. Warm submissions remain responsive and measurable
+
+After one valid warm-up submission has loaded the detector and `GET /health`
+reports `"detector_loaded": true`, at least 9 of 10 valid `POST /submit`
+requests (the ten paragraphs in `scenarios.MY_OWN_WRITING`, 42 to 86 words
+each, each sent with a different `creator_id`) return `200` within 500 ms in
+each of 3 trials. The time is the `duration_ms` in that request's record in
+`logs/runs.jsonl`. Each successful response includes `content_id`,
+`model_score`, `style_score`, `confidence`, and `label`.
+
+**Why this target:** Initial model loading is expected to be slow, but a warmed
+local detector should handle normal submissions promptly. 500 ms is about ten
+times the 29 to 53 ms warm runs in my cost measurement and a quarter of the
+2,031 ms cold start, so a request that reloads the model cannot pass. The
+returned component scores are necessary to explain a questionable
+classification rather than presenting an unexplained label.
+
+---
+
+## 5. Appeals preserve the original evidence
+
+In each of 3 trials, after one valid submission, an appeal using its returned
+`content_id` and non-empty reasoning returns `200` with
+`"status": "under_review"`. The audit log (read from `GET /log`) contains both
+the original decision and a later appeal record with the same `content_id`, and
+`GET /content/<content_id>` retains the original scores and label while showing
+`"status": "under_review"`.
+
+**Why this target:** A false AI accusation is costly to a writer. An appeal
+must be traceable without overwriting the initial decision, so a reviewer can
+see both what the system concluded and why the writer challenged it.
