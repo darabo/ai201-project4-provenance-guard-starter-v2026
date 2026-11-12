@@ -1919,6 +1919,64 @@ them far less than a public accusation the site later has to take back.
      Do not delete and recreate this repository.
      ═════════════════════════════════════════════════════════════════════ -->
 
+## Capstone
+
+Unit 9. Everything under this heading is the capstone. The sections above it
+are units 7 and 8 and are left as they were.
+
+**What This Extends**
+
+This extends Provenance Guard, the fourth of my four systems (units 7 and 8).
+It is the Flask service that takes a piece of writing on `POST /submit`, scores
+it with three signals (gpt2 perplexity, sentence style, stock phrases) and
+answers with a label: high-confidence AI, unsure, or high-confidence human.
+
+Before this unit the service only ever ran from my editor with `python app.py`,
+on Flask's development server. The one record it kept was the audit log
+(`logs/audit.jsonl`), which stores decisions, appeals and rejections. That log
+cannot answer two questions about a running service: how long did a request
+take, and what happened to a request that never became a decision (a wrong
+URL, a crash, a `GET /health`)?
+
+What is new in this unit:
+
+1. A run log. `runlog.py` writes one JSON record per HTTP request to
+   `logs/runs.jsonl`, whatever the outcome: timestamp, what came in, what went
+   out, how long it took, and how that time split across the three signals.
+2. A run path that is not my editor. The service starts under `gunicorn` from
+   one command, documented in [RUNNING.md](RUNNING.md) with the environment it
+   needs.
+3. A cost measurement. `measure_cost.py` sends ten real submissions and reads
+   their compute time back out of the run log.
+
+**The Shape**
+
+Shape A, deploy and instrument. The extension is the operational layer around
+a service whose scoring I am leaving alone: the start command, the run log,
+and the numbers that come out of it.
+
+Out of scope, each of which I considered and decided against:
+
+- I am not fixing the unit 8 miss where the rate limiter answers before the
+  route does (old criterion 5). That is failure hardening, which is Shape B,
+  and it would need its own before and after run.
+- I am not touching the detector, the weights or the thresholds. Every score
+  the service returns should be the same as it was at the end of unit 8.
+- I am not hosting it. `torch` plus the gpt2 weights need more memory than
+  the 512 MB a free host gives, so this runs locally with a committed log
+  (Path B). The arithmetic is in RUNNING.md.
+- I am not building a dashboard or a metrics endpoint. The run log is a file
+  that gets read with a script.
+
+**Stretch (declared before building)**
+
+Declared on the day I started the capstone, before any of this code existed:
+
+- A latency breakdown: where the time goes across the stages of one run,
+  measured from the per-stage timings in the run log.
+- A load observation: the service run at about ten times its normal request
+  rate, with a report on what changed.
+
 ---
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
