@@ -25,21 +25,182 @@ Routes:
     POST /verify              answer it and earn the badge (stretch)
     GET  /log         the audit log. Already works
     GET  /health      is the service up, and is the model loaded
+
+Unit 9 (capstone): every request to any route above also leaves one record in
+the run log, logs/runs.jsonl. The hooks that do it are just below the line
+`app = Flask(__name__)`; runlog.py explains the record.
 """
 
+import sys
+import time
 import uuid
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, got_request_exception, has_request_context, jsonify, request
 
 import audit
 import config
 import credentials
 import detector
 import markers
+import runlog
 import scoring
 import stylometry
 
 app = Flask(__name__)
+
+
+# ── The run log — UNIT 9 (capstone) ──────────────────────────────────────────
+# One record in logs/runs.jsonl for EVERY request, whatever happens to it.
+#
+# This is done with "hooks": functions Flask calls by itself around each
+# request, so no route has to remember to log. Three of them are used:
+#
+#   before_request    runs before the route. Starts the clocks.
+#   after_request     runs once a response exists. Writes the record.
+#   teardown_request  runs last, even after a crash. Catches the one case
+#                     after_request can miss (see below).
+#
+# They are registered HERE, above the rate limiter, on purpose. Flask runs
+# before_request functions in the order they were registered, and the limiter
+# can end a request early with a 429. Starting the clock first means a
+# rate-limited request is timed and logged like any other.
+#
+# `g` is Flask's per-request scratch space: an object that exists for exactly
+# one request and is thrown away afterwards. It's how the "before" hook hands
+# the start time to the "after" hook without a global variable that two
+# simultaneous requests would overwrite.
+
+def _ms(seconds: float) -> float:
+    """Seconds to milliseconds (x 1000), rounded to one decimal place."""
+    return round(seconds * 1000, 1)
+
+
+@app.before_request
+def _start_run_record():
+    """Note when this request arrived and start timing it."""
+    g.run_id = runlog.new_request_id()
+    g.run_timestamp = runlog.now()
+    # True when gpt2 isn't in memory yet. The first scored request after a
+    # start has to load it (seconds, not milliseconds), and without this flag
+    # that one slow row would look like an unexplained spike.
+    g.run_cold_start = detector._model is None
+    g.run_stages = None          # filled in by _score_text if text gets scored
+    g.run_error_type = None      # filled in by _note_exception if a route crashes
+    g.run_logged = False         # set once the record is written
+    # Two clocks, because they measure different things:
+    #   process_time  processor time this whole process has used, summed over
+    #                 every CPU core. This is the "compute" a request costs.
+    #   perf_counter  ordinary elapsed ("wall-clock") time. This is the wait
+    #                 the caller experiences.
+    # gpt2 runs on several cores at once, so CPU time can be larger than the
+    # elapsed time. CPU time is per PROCESS, so it's only attributable to one
+    # request while requests are handled one at a time, which is how
+    # RUNNING.md starts the service (a single gunicorn worker).
+    g.run_cpu_started = time.process_time()
+    g.run_started = time.perf_counter()
+
+
+def _note_exception(sender, exception, **extra):
+    """
+    Remember what kind of exception crashed a route, for the run record.
+
+    Flask sends the `got_request_exception` signal when a route raises
+    something nobody handled. A "signal" is a notification you can subscribe
+    to; subscribing changes nothing about how Flask then deals with the crash.
+    """
+    g.run_error_type = type(exception).__name__
+
+
+got_request_exception.connect(_note_exception, app)
+
+
+def _build_run_record(status_code: int, response_body) -> dict:
+    """
+    Assemble one run-log record from the request and what was sent back.
+
+    Every read from `g` uses getattr with a fallback, so a request that
+    somehow skipped _start_run_record still produces a record instead of an
+    AttributeError inside the logging code.
+    """
+    finished = time.perf_counter()
+    cpu_finished = time.process_time()
+    started = getattr(g, "run_started", None)
+    cpu_started = getattr(g, "run_cpu_started", None)
+
+    # silent=True: a body that isn't JSON gives None instead of raising.
+    # get_data(cache=True) returns the raw bytes; Flask keeps them after the
+    # first read, so asking again here costs nothing.
+    payload = request.get_json(silent=True)
+    body_bytes = len(request.get_data(cache=True))
+
+    record = {
+        "timestamp": getattr(g, "run_timestamp", None) or runlog.now(),
+        "request_id": getattr(g, "run_id", None) or runlog.new_request_id(),
+        "method": request.method,
+        "path": request.path,
+        "input": runlog.summarize_input(payload, body_bytes),
+        "output": runlog.summarize_output(status_code, response_body),
+        "outcome": runlog.outcome_for(status_code),
+        "duration_ms": _ms(finished - started) if started is not None else None,
+        "cpu_ms": _ms(cpu_finished - cpu_started) if cpu_started is not None else None,
+        "cold_start": getattr(g, "run_cold_start", None),
+    }
+    stages = getattr(g, "run_stages", None)
+    if stages:
+        record["stages_ms"] = stages
+    error_type = getattr(g, "run_error_type", None)
+    if error_type:
+        record["output"]["error_type"] = error_type
+    return record
+
+
+@app.after_request
+def _write_run_record(response):
+    """
+    Write the run record for this request, then let the response go.
+
+    Flask calls this with the finished response for every request that
+    produced one: a 200, a refused 400, a rate-limited 429, an unknown-URL
+    404, and (under gunicorn) the 500 Flask builds when a route crashes.
+
+    The whole body is inside try/except because logging must never be the
+    reason a request fails. If the log can't be written (disk full, folder
+    not writable) the caller still gets their answer and the problem is
+    printed to the server's terminal instead.
+    """
+    try:
+        record = _build_run_record(response.status_code, response.get_json(silent=True))
+        # The id travels back in a response header, so whoever sent the
+        # request can look up exactly its row in logs/runs.jsonl.
+        response.headers["X-Request-ID"] = record["request_id"]
+        runlog.write(record)
+        g.run_logged = True
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        print(f"[runlog] could not write a run record: {exc!r}", file=sys.stderr)
+    return response
+
+
+@app.teardown_request
+def _write_run_record_after_crash(exc):
+    """
+    The safety net for a crash that never became a response.
+
+    With `python app.py` Flask runs in debug mode, and in debug mode an
+    unhandled exception is passed straight up to the debugger. No response
+    object is built, so after_request never runs and the crash would leave
+    nothing in the log. teardown_request runs regardless, and `exc` is the
+    exception (or None when the request ended normally).
+
+    `g.run_logged` stops a double entry: under gunicorn the crash DOES become
+    a 500 response, after_request logs it, and this hook has nothing to do.
+    """
+    if exc is None or getattr(g, "run_logged", True):
+        return
+    try:
+        g.run_error_type = type(exc).__name__
+        runlog.write(_build_run_record(500, None))
+    except Exception as log_exc:  # noqa: BLE001 — never raise from teardown
+        print(f"[runlog] could not write a crash record: {log_exc!r}", file=sys.stderr)
 
 
 # ── Rate limiting — UNIT 8 ────────────────────────────────────────────────────
@@ -287,13 +448,22 @@ def _score_text(text: str) -> dict:
     Returns a dict with guess, confidence, label, model_score, style_score and
     marker_score. Raises detector.DetectorUnavailable if gpt2 can't load.
     """
+    # Unit 9: a stopwatch reading is taken between the stages (t0 to t4), so
+    # the run log can say where a request's time went. perf_counter() returns
+    # seconds from an arbitrary starting point; only the DIFFERENCE between
+    # two readings means anything.
+    t0 = time.perf_counter()
+
     # Signal one. The first call loads gpt2 into memory (10+ seconds); after
     # that it stays loaded and each call takes a second or two.
     model_score = detector.model_signal(text)
+    t1 = time.perf_counter()
 
     # Signals two and three are plain Python string work: milliseconds.
     style_score = stylometry.style_signal(text)
+    t2 = time.perf_counter()
     marker_score = markers.marker_signal(text)
+    t3 = time.perf_counter()
 
     # One number from three. The rule and its numbers are explained in
     # scoring.combine_signals and above the weights in config.py.
@@ -301,6 +471,18 @@ def _score_text(text: str) -> dict:
 
     # The number becomes words a writer can read.
     guess, label = scoring.score_to_label(confidence)
+    t4 = time.perf_counter()
+
+    # Hand the timings to the run-log hook through `g`. has_request_context()
+    # is False if this function is ever called outside a web request (from a
+    # test or a script), where `g` doesn't exist and touching it would raise.
+    if has_request_context():
+        g.run_stages = {
+            "model": _ms(t1 - t0),      # gpt2 perplexity (detector.py)
+            "style": _ms(t2 - t1),      # sentence measures (stylometry.py)
+            "markers": _ms(t3 - t2),    # stock-phrase search (markers.py)
+            "scoring": _ms(t4 - t3),    # combine + label (scoring.py)
+        }
 
     return {
         "guess": guess,
@@ -571,6 +753,7 @@ def main():
     print(f"  detector model:  {config.DETECTOR_MODEL}")
     print(f"  rate limiting:   {'ON' if config.RATE_LIMITING_ENABLED else 'off (unit 8)'}")
     print(f"  audit log:       {config.AUDIT_LOG}")
+    print(f"  run log:         {config.RUN_LOG}")
     print()
     print("Check it's alive:")
     print(f'  curl -X POST http://{config.HOST}:{config.PORT}/ping \\')
