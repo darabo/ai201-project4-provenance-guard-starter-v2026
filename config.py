@@ -171,3 +171,9 @@ RATE_LIMIT_STORAGE = "memory://"
 LOG_DIR = ROOT / "logs"
 AUDIT_LOG = LOG_DIR / "audit.jsonl"
 RESULTS_DIR = ROOT / "results"
+
+# Unit 9 (capstone): the run log, one line per HTTP request. See runlog.py for
+# why this is a different file from the audit log above. The environment
+# variable lets a test point the log somewhere else without touching the
+# committed file; with nothing set it is logs/runs.jsonl.
+RUN_LOG = Path(os.getenv("AI201_RUN_LOG", str(LOG_DIR / "runs.jsonl")))
