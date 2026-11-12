@@ -106,6 +106,9 @@ about 40 milliseconds.
 | `python runlog.py --tail 10` | Print the last ten records |
 | `python runlog.py --count` | How many records, split into ok, rejected and error |
 | `python measure_cost.py` | Send ten submissions and report the compute time per run |
+| `python runlog.py --stages` | Where the time goes inside a scored request |
+| `python run_capstone.py --label before` | The five capstone criteria, three trials each. Starts and stops the service itself, so stop your own copy first |
+| `python load_test.py` | Send submissions at 2 a second, then 20 a second, and compare |
 
 ### What went wrong when I followed this in a fresh clone
 

@@ -2389,6 +2389,165 @@ What the after run does not show:
 - `run_capstone.py` changed between the two runs in one place: the report's
   "Code tested" line now names any uncommitted `.py` files. No check changed.
 
+**Stretch: Latency Breakdown**
+
+Where the time goes inside one scored request, measured from the `stages_ms`
+field that `app.py::_score_text` writes into every run record. Produced by
+`python runlog.py --stages` (`runlog.py::stage_breakdown`) over every warm
+scored request in `logs/runs.jsonl` up to that point, before the load test
+below was run. Saved in `results/latency_breakdown_2026-11-11.md`.
+
+Warm scored requests: 111   mean total: 40.13 ms
+
+| Stage | Mean ms | Share of the request |
+|---|---|---|
+| gpt2 perplexity (detector.py) | 38.53 | 96.0% |
+| style measures (stylometry.py) | 0.11 | 0.3% |
+| stock-phrase search (markers.py) | 0.11 | 0.3% |
+| combine and label (scoring.py) | 0.00 | 0.0% |
+| everything else (checks, audit write, response) | 1.39 | 3.5% |
+| **whole request** | 40.13 | 100.0% |
+
+Cold starts: 7   mean total: 2265.4 ms, of which the model stage (load + first pass): 2263.4 ms (99.9%)
+
+The gpt2 pass dominates: 96.0% of a warm request, and 99.9% of a cold start,
+where it also includes loading the model. My own code (the style measures, the
+stock-phrase search and the scoring rule) adds up to 0.22 ms, about half a
+percent. Checking the input, writing the audit entry and building the response
+take 1.39 ms together. So the only change that could make a request noticeably
+faster is one to the model stage, such as reading fewer than 400 tokens.
+
+**Stretch: Load Observation**
+
+The service at a normal rate and at ten times that rate. Produced by
+`python load_test.py --save` against the service started from RUNNING.md, and
+saved in `results/load_2026-11-11_2150.md`. "Normal" is 2 submissions a
+second, which is already 120 a minute. Ten times that, 20 a second, was chosen
+to sit near what one worker can do at about 40 ms a request (1000 / 40 = 25 a
+second). Requests are sent when they are due, without waiting for earlier
+answers, each from its own `creator_id` so the rate limiter is not what gets
+measured.
+
+```text
+Load observation, 2026-11-11T21:50:40-05:00
+Service: http://127.0.0.1:5000   each phase: 15 s   run tag: 65a750
+
+| Measure | Normal (2 a second) | Ten times (20 a second) |
+|---|---|---|
+| Requests sent | 30 | 300 |
+| Responses by status | 200: 30 | 200: 300 |
+| Found in the run log | 30 of 30 | 300 of 300 |
+| Client latency ms, median / 95th / max | 56.4 / 69.4 / 70.8 | 38.3 / 51.3 / 86.3 |
+| Service time ms, median / 95th / max | 53.6 / 66.8 / 68.7 | 36.4 / 47.7 / 76.3 |
+| CPU ms per request, mean | 71.1 | 49.6 |
+| Seconds until every answer was in | 14.6 | 15.0 |
+| Answers per second achieved | 2.1 | 20.0 |
+```
+
+What changed, and what did not:
+
+- Nothing failed. At 20 a second all 300 requests returned 200, all 300 are in
+  the run log, and the service answered as fast as requests arrived (20.0 a
+  second).
+- Queueing was small. The slowest caller waited 86.3 ms at 20 a second against
+  70.8 ms at 2 a second. At 20 a second the worker is busy about 73% of the
+  time (20 x 36.4 ms = 728 ms of work each second), so most requests found it
+  free.
+- Each request got cheaper under load, which I did not expect. Median service
+  time fell from 53.6 ms to 36.4 ms, and CPU per request from 71.1 ms to
+  49.6 ms. My best explanation is that at 2 a second the process sits idle for
+  about 450 ms between requests and each one starts from a slowed-down
+  processor, while at 20 a second it never goes idle. I have not confirmed
+  that.
+
+That last point matters for What It Costs. I measured the 50.1 ms per run with
+requests sent back to back, which matches the 49.6 ms seen here under load. A
+hundred people a day arrive with long idle gaps, which is the 2-a-second
+situation or slower, so the per-run cost there is more likely near 71.1 ms:
+100 x 71.1 ms = 7.1 seconds of CPU a day, where I had worked out 5.0. Both are
+far below anything that would limit the service.
+
+I did not test above 20 a second. By the arithmetic, one worker runs out of
+room at about 1000 / 36.4 = 27 a second, and past that requests would queue.
+
+**What's Still Broken**
+
+After the improvement all five criteria are met in all three trials, so no
+criterion is still missed. That tells me at least one target was set too low.
+
+The target I would tighten is criterion 4. It allows 500 ms, and across the
+before and after runs the slowest of 60 warm requests took 83.4 ms, with a
+mean near 40 ms. A target that sits six times above the worst case seen cannot
+detect anything short of the model being reloaded. I would tighten it to: at
+least 9 of 10 within 100 ms. That is about two and a half times the mean, and
+the 83.4 ms request shows it could be missed on a busier or slower machine,
+which is what makes it a real test.
+
+Criterion 1 is the other soft one. It passed from a clone of my local folder
+with gpt2 already in the Hugging Face cache, so the 525 MB download and the
+GitHub clone were never exercised. A stricter version would clone the GitHub
+URL with an empty model cache each time.
+
+Things that are still wrong and that no criterion of mine measures:
+
+- A request can succeed without leaving a run record. If the log cannot be
+  written, `app.py::_write_run_record` catches the error so the caller still
+  gets an answer. I checked this by pointing the log at a folder that does not
+  exist: `POST /ping` returned 200 with an `X-Request-ID` header, and that id
+  matched no record. The only trace was one line on the server's terminal.
+- The unit 8 problem is untouched: the rate limiter still answers before the
+  route does, so a malformed request from a caller over the limit gets a 429
+  where it should get a 400. I ruled that out of scope in The Shape.
+- The service runs one worker, and I have not tested past 20 requests a
+  second.
+- Since writing The Improvement I did send a wrong-method request through the
+  running service: `GET /submit` returned 405 and its record carries
+  `"error": "method_not_allowed"`. That case is now covered once, by hand,
+  and is not part of any criterion.
+
+Why I stopped: the unit allows one improvement, each further change needs its
+own before and after run to mean anything, and every criterion I had written
+was met.
+
+The one thing I would do first with another unit: make a failed log write
+visible, by counting failures and reporting the count in `GET /health`. I
+would do that before tightening any target, because the whole claim of this
+extension is that every request leaves a record, and this is the one case I
+know of where it silently does not.
+
+**How I Used AI**
+
+I used Claude Code for most of the building in this unit. It wrote the
+instrumentation (`runlog.py` and the hooks in `app.py`), the three scripts
+(`measure_cost.py`, `run_capstone.py`, `load_test.py`), and the first drafts
+of these capstone sections, filling in the tables and log lines from the saved
+result files. It recommended Shape A and the out-of-scope list, and I agreed
+to them. Two moments where what I asked for and what I did with the answer
+are worth spelling out:
+
+1. Choosing the system. I gave it the unit brief, the rubric and all four of
+   my repositories and asked which one would be best for the local run path.
+   It recommended Provenance Guard and gave reasons I could check: its
+   `test.py` passed 9 of 9 that day, it needs no API key (so thirty trials
+   would not run into the Gemini rate limits that projects 1 and 2 have retry
+   code for), and it already wrote an audit log. It also pointed out that I
+   had mixed up the run path "B" with the shape "B", which are different
+   choices. I went with Provenance Guard.
+
+2. Reviewing my criteria. I wrote five criteria and asked how they were. It
+   did not rewrite them. It listed where a stranger would test them
+   differently from me: criterion 2 did not say which ten requests to send,
+   and whether it passed depended on whether a mistyped URL was among them;
+   criteria 3 and 4 depended on which `creator_id` was used, because of the
+   rate limiter; and criterion 4's 5-second target could not fail when warm
+   requests took 29 to 53 ms. I then asked for help closing those gaps. It
+   proposed additions and I took them: the ten requests named in order with
+   the mistyped URL included, a fresh `creator_id` per trial, 500 ms read
+   from `duration_ms` in place of 5 seconds, and my own ten paragraphs in
+   place of "100 to 400 words". The mistyped URL is the request that made
+   criterion 2 miss, so that review is where this unit's one diagnosis and
+   improvement came from.
+
 ---
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
