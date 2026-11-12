@@ -37,6 +37,7 @@ From a terminal:
 
     python runlog.py --tail 10      the last ten records, one per line
     python runlog.py --count        how many records, split by outcome
+    python runlog.py --stages       where the time goes inside a scored request
 """
 
 import json
@@ -248,6 +249,67 @@ def find(request_id: str) -> dict | None:
     return None
 
 
+def stage_breakdown(records: list[dict]) -> list[str]:
+    """
+    Where the time goes inside one scored request. (Capstone stretch item.)
+
+    Uses every record that scored a text successfully with gpt2 already in
+    memory ("warm"). For each stage it reports the mean time and what share
+    of the whole request that is. Returns the report as a list of lines.
+
+    The four timed stages come from the stopwatch readings in
+    app.py::_score_text. "everything else" is the request's total time minus
+    those four: reading and checking the body, the rate-limit check, the
+    credential lookup, writing the audit entry and building the response.
+    Nothing times those individually; they are what's left over.
+
+    Cold starts (the first scored request after a start, which also loads the
+    model) are reported on their own line, because averaging one 2-second
+    request in with forty-millisecond ones would describe neither.
+    """
+    scored = [r for r in records
+              if r.get("stages_ms") and r.get("outcome") == "ok" and r.get("duration_ms") is not None]
+    warm = [r for r in scored if not r.get("cold_start")]
+    cold = [r for r in scored if r.get("cold_start")]
+    if not warm:
+        return ["No warm scored requests in the log yet."]
+
+    def mean(values):
+        return sum(values) / len(values)
+
+    total = mean([r["duration_ms"] for r in warm])
+    stages = ["model", "style", "markers", "scoring"]
+    means = {name: mean([r["stages_ms"].get(name, 0.0) for r in warm]) for name in stages}
+    # Whatever the four stages don't account for.
+    means["everything else"] = total - sum(means.values())
+
+    labels = {
+        "model": "gpt2 perplexity (detector.py)",
+        "style": "style measures (stylometry.py)",
+        "markers": "stock-phrase search (markers.py)",
+        "scoring": "combine and label (scoring.py)",
+        "everything else": "everything else (checks, audit write, response)",
+    }
+    lines = [
+        f"Warm scored requests: {len(warm)}   mean total: {total:.2f} ms",
+        "",
+        "| Stage | Mean ms | Share of the request |",
+        "|---|---|---|",
+    ]
+    for name, value in means.items():
+        # Share = this stage's mean divided by the mean total, as a percentage.
+        lines.append(f"| {labels[name]} | {value:.2f} | {100 * value / total:.1f}% |")
+    lines.append(f"| **whole request** | {total:.2f} | 100.0% |")
+
+    if cold:
+        cold_total = mean([r["duration_ms"] for r in cold])
+        cold_model = mean([r["stages_ms"].get("model", 0.0) for r in cold])
+        lines += ["", f"Cold starts: {len(cold)}   mean total: {cold_total:.1f} ms, "
+                      f"of which the model stage (load + first pass): {cold_model:.1f} ms "
+                      f"({100 * cold_model / cold_total:.1f}%)"]
+    return lines
+
+
 def main():
     """The small command-line reader described at the top of this file."""
     import argparse
@@ -257,9 +319,15 @@ def main():
                         help="print the last N records, one JSON object per line")
     parser.add_argument("--count", action="store_true",
                         help="print how many records there are, by outcome")
+    parser.add_argument("--stages", action="store_true",
+                        help="print where the time goes inside a scored request")
     args = parser.parse_args()
 
     records = read_runs()
+
+    if args.stages:
+        print("\n".join(stage_breakdown(records)))
+        return
 
     if args.count:
         by_outcome: dict[str, int] = {}
