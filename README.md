@@ -1977,6 +1977,158 @@ Declared on the day I started the capstone, before any of this code existed:
 - A load observation: the service run at about ten times its normal request
   rate, with a report on what changed.
 
+**Running It**
+
+Path B, local with logs. The service starts from one command, run in a
+terminal from the repository folder with the virtual environment active:
+
+```bash
+gunicorn app:app --bind 127.0.0.1:5000 --workers 1 --timeout 120
+```
+
+[RUNNING.md](RUNNING.md#the-capstone-run-path-unit-9) has the whole path from
+a clean checkout: the Python version, each dependency with the version I ran,
+the model file and its size, how to check the service is up, and what went
+wrong when I followed my own instructions in a fresh clone.
+
+I did not host it. Measured with `ps`, the worker process holds 39 MB before
+its first submission and about 1,000 MB once gpt2 is loaded. A free host gives
+512 MB.
+
+The committed record of it running is `logs/runs.jsonl`: 36 requests
+from one session on 2026-11-12 (UTC), against the service started with the
+command above. Every log line quoted below is copied from that file.
+
+**Instrumentation**
+
+Every HTTP request writes one JSON record to `logs/runs.jsonl`, whatever
+happens to it. The record is built in `app.py::_build_run_record` and written
+by `runlog.py::write`. Both are called from a Flask `after_request` hook
+(`app.py::_write_run_record`), which Flask runs for every response, so a route
+cannot forget to log. Print the latest records with `python runlog.py --tail 10`.
+
+What each record holds:
+
+| Field | What it holds |
+|---|---|
+| `timestamp` | When the request arrived, UTC, to the millisecond |
+| `request_id` | A random id for this request. It is also sent back in the `X-Request-ID` response header, so a caller can find their own row |
+| `method`, `path` | Which route was asked for, e.g. `POST /submit` |
+| `input` | What came in: body size in bytes, body type (`object`, `list`, `empty`, `unparseable`), the field names, the `creator_id`, and for a text its length in characters and words plus its first 60 characters. The full text is not stored |
+| `output` | What went out: the HTTP status code, and where present the `content_id`, `guess`, `confidence`, the three signal scores, and the `error` code |
+| `outcome` | `ok` (status 2xx), `rejected` (4xx: the caller's request was refused) or `error` (5xx: the service failed) |
+| `duration_ms` | Elapsed time for the whole request, in milliseconds |
+| `cpu_ms` | Processor time the service used during the request, summed over all cores. This is the cost figure |
+| `stages_ms` | Only on requests that scored a text: milliseconds spent in gpt2 (`model`), the style measures, the stock-phrase search and the scoring rule |
+| `cold_start` | `true` if gpt2 was not yet in memory when the request arrived |
+
+Ten entries from the session, in the order they happened. The first `/submit`
+is the cold start (2,031 ms); the next one took 37.9 ms.
+
+```text
+{"timestamp": "2026-11-12T01:49:32.767+00:00", "request_id": "r_bd6ac4bd3850", "method": "GET", "path": "/health", "input": {"body_bytes": 0, "body_type": "empty"}, "output": {"status_code": 200, "ok": true}, "outcome": "ok", "duration_ms": 1.9, "cpu_ms": 1.8, "cold_start": true}
+{"timestamp": "2026-11-12T01:49:32.803+00:00", "request_id": "r_544e503895f9", "method": "POST", "path": "/submit", "input": {"body_bytes": 728, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "demo_instructor", "text_chars": 680, "text_words": 91, "text_preview": "The importance of effective time management cannot be overst"}, "output": {"status_code": 200, "content_id": "c_6f4724424ba7", "guess": "ai", "confidence": 0.8137, "model_score": 0.7544, "style_score": 0.7145, "marker_score": 0.9943, "status": "decided"}, "outcome": "ok", "duration_ms": 2031.3, "cpu_ms": 1431.1, "cold_start": true, "stages_ms": {"model": 2029.5, "style": 0.2, "markers": 0.2, "scoring": 0.0}}
+{"timestamp": "2026-11-12T01:49:34.848+00:00", "request_id": "r_42e5b217e895", "method": "POST", "path": "/submit", "input": {"body_bytes": 450, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "demo_instructor", "text_chars": 400, "text_words": 68, "text_preview": "Time management matters more than people admit, especially n"}, "output": {"status_code": 200, "content_id": "c_f0b78552a503", "guess": "unsure", "confidence": 0.4441, "model_score": 0.3489, "style_score": 0.5393, "marker_score": 0.0, "status": "decided"}, "outcome": "ok", "duration_ms": 37.9, "cpu_ms": 53.4, "cold_start": false, "stages_ms": {"model": 36.3, "style": 0.1, "markers": 0.2, "scoring": 0.0}}
+{"timestamp": "2026-11-12T01:49:35.017+00:00", "request_id": "r_1b834adfd591", "method": "POST", "path": "/submit", "input": {"body_bytes": 355, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "writer_1", "text_chars": 312, "text_words": 48, "text_preview": "The relations of these two nations are strained and tense, w"}, "output": {"status_code": 200, "content_id": "c_f3b30bd31a00", "guess": "unsure", "confidence": 0.5871, "model_score": 0.5793, "style_score": 0.5949, "marker_score": 0.0, "status": "decided"}, "outcome": "ok", "duration_ms": 30.3, "cpu_ms": 41.1, "cold_start": false, "stages_ms": {"model": 28.9, "style": 0.1, "markers": 0.1, "scoring": 0.0}}
+{"timestamp": "2026-11-12T01:49:35.048+00:00", "request_id": "r_f26385f1f283", "method": "POST", "path": "/submit", "input": {"body_bytes": 378, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "writer_2", "text_chars": 340, "text_words": 54, "text_preview": "The histories of both nations have always been tied together"}, "output": {"status_code": 200, "content_id": "c_f83e97b97f47", "guess": "unsure", "confidence": 0.5486, "model_score": 0.6255, "style_score": 0.4718, "marker_score": 0.0, "status": "decided"}, "outcome": "ok", "duration_ms": 33.2, "cpu_ms": 45.2, "cold_start": false, "stages_ms": {"model": 31.8, "style": 0.1, "markers": 0.1, "scoring": 0.0}}
+{"timestamp": "2026-11-12T01:49:35.083+00:00", "request_id": "r_f4702e3536e8", "method": "POST", "path": "/submit", "input": {"body_bytes": 444, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "writer_3", "text_chars": 401, "text_words": 58, "text_preview": "However after the 1979 Iranian Revolution, with the Iranian "}, "output": {"status_code": 200, "content_id": "c_3e7470cd92ea", "guess": "unsure", "confidence": 0.6331, "model_score": 0.5645, "style_score": 0.7016, "marker_score": 0.0, "status": "decided"}, "outcome": "ok", "duration_ms": 35.9, "cpu_ms": 48.1, "cold_start": false, "stages_ms": {"model": 34.5, "style": 0.1, "markers": 0.1, "scoring": 0.0}}
+{"timestamp": "2026-11-12T01:49:35.201+00:00", "request_id": "r_085cca2ccba3", "method": "POST", "path": "/appeal", "input": {"body_bytes": 89, "body_type": "object", "fields": ["content_id", "reasoning"], "content_id": "c_f3b30bd31a00"}, "output": {"status_code": 200, "content_id": "c_f3b30bd31a00", "status": "under_review"}, "outcome": "ok", "duration_ms": 1.0, "cpu_ms": 1.0, "cold_start": false}
+{"timestamp": "2026-11-12T01:49:35.226+00:00", "request_id": "r_4610c4305a99", "method": "GET", "path": "/content/c_f3b30bd31a00", "input": {"body_bytes": 0, "body_type": "empty"}, "output": {"status_code": 200, "content_id": "c_f3b30bd31a00", "guess": "unsure", "confidence": 0.5871, "model_score": 0.5793, "style_score": 0.5949, "marker_score": 0.0, "status": "under_review"}, "outcome": "ok", "duration_ms": 0.8, "cpu_ms": 0.8, "cold_start": false}
+{"timestamp": "2026-11-12T01:49:35.428+00:00", "request_id": "r_f7e280147233", "method": "POST", "path": "/submit", "input": {"body_bytes": 385, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "writer_in_a_hurry", "text_chars": 338, "text_words": 54, "text_preview": "With all this in mind one should consider the other side in "}, "output": {"status_code": 200, "content_id": "c_53a9a8f4ca33", "guess": "unsure", "confidence": 0.6111, "model_score": 0.6223, "style_score": 0.6, "marker_score": 0.0, "status": "decided"}, "outcome": "ok", "duration_ms": 29.4, "cpu_ms": 39.7, "cold_start": false, "stages_ms": {"model": 28.1, "style": 0.1, "markers": 0.1, "scoring": 0.0}}
+{"timestamp": "2026-11-12T01:49:35.579+00:00", "request_id": "r_9399928f588a", "method": "POST", "path": "/submit", "input": {"body_bytes": 548, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "cost_5e115b_00", "text_chars": 494, "text_words": 86, "text_preview": "Few nations in the world share polarizing views among people"}, "output": {"status_code": 200, "content_id": "c_970a65efa42e", "guess": "unsure", "confidence": 0.5259, "model_score": 0.5643, "style_score": 0.4874, "marker_score": 0.0, "status": "decided"}, "outcome": "ok", "duration_ms": 40.1, "cpu_ms": 57.4, "cold_start": false, "stages_ms": {"model": 38.6, "style": 0.1, "markers": 0.1, "scoring": 0.0}}
+```
+
+Failed runs from the same session. All six were refused by the service (status
+400, 404 or 429) and each left a record with `"outcome": "rejected"`: an empty
+text, a JSON list instead of an object, a body that is not valid JSON, an
+appeal against a `content_id` that does not exist, a mistyped URL, and the
+sixth submission in a minute from one writer.
+
+```text
+{"timestamp": "2026-11-12T01:49:35.142+00:00", "request_id": "r_211f5b4655d0", "method": "POST", "path": "/submit", "input": {"body_bytes": 38, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "writer_4", "text_chars": 0, "text_words": 0, "text_preview": ""}, "output": {"status_code": 400, "error": "bad_request"}, "outcome": "rejected", "duration_ms": 0.3, "cpu_ms": 0.3, "cold_start": false}
+{"timestamp": "2026-11-12T01:49:35.165+00:00", "request_id": "r_f1ddd8159644", "method": "POST", "path": "/submit", "input": {"body_bytes": 9, "body_type": "list"}, "output": {"status_code": 400, "error": "bad_request"}, "outcome": "rejected", "duration_ms": 0.3, "cpu_ms": 0.3, "cold_start": false}
+{"timestamp": "2026-11-12T01:49:35.177+00:00", "request_id": "r_1e3a7d4babe8", "method": "POST", "path": "/submit", "input": {"body_bytes": 28, "body_type": "unparseable"}, "output": {"status_code": 400, "error": "bad_request"}, "outcome": "rejected", "duration_ms": 0.3, "cpu_ms": 0.3, "cold_start": false}
+{"timestamp": "2026-11-12T01:49:35.213+00:00", "request_id": "r_512045e2e08b", "method": "POST", "path": "/appeal", "input": {"body_bytes": 70, "body_type": "object", "fields": ["content_id", "reasoning"], "content_id": "c_doesnotexist"}, "output": {"status_code": 404, "error": "not_found"}, "outcome": "rejected", "duration_ms": 1.0, "cpu_ms": 1.0, "cold_start": false}
+{"timestamp": "2026-11-12T01:49:35.238+00:00", "request_id": "r_26066a21bd40", "method": "GET", "path": "/submitt", "input": {"body_bytes": 0, "body_type": "empty"}, "output": {"status_code": 404}, "outcome": "rejected", "duration_ms": 0.1, "cpu_ms": 0.1, "cold_start": false}
+{"timestamp": "2026-11-12T01:49:35.459+00:00", "request_id": "r_95d1dc18bd58", "method": "POST", "path": "/submit", "input": {"body_bytes": 385, "body_type": "object", "fields": ["creator_id", "text"], "creator_id": "writer_in_a_hurry", "text_chars": 338, "text_words": 54, "text_preview": "With all this in mind one should consider the other side in "}, "output": {"status_code": 429, "error": "rate_limited"}, "outcome": "rejected", "duration_ms": 0.3, "cpu_ms": 0.3, "cold_start": false}
+```
+
+No request in the session ended in a 5xx, so the committed log has no
+`"outcome": "error"` record. I tested that path separately, through Flask's
+test client, by making `_score_text` raise a `RuntimeError`. The request
+returned 500 and left a record with `"outcome": "error"` and
+`"error_type": "RuntimeError"`. That record is not in `logs/runs.jsonl`
+because it did not come from the running service.
+
+**What It Costs**
+
+One run (one `POST /submit` that scores a text) costs **50.1 milliseconds of
+processor time**, on an Apple M5 Pro. The service calls no paid API, so there
+is no charge per request. What a run uses up is compute on the machine
+holding the model.
+
+How I measured it: `python measure_cost.py --save`, against the service
+started from RUNNING.md. The script sends one warm-up submission, then ten of
+my own paragraphs (42 to 86 words) one at a time, each from a different
+`creator_id`. It reads the `X-Request-ID` header off each response, finds that
+row in `logs/runs.jsonl`, and averages the `cpu_ms` the service recorded for
+itself. The timing comes from inside the service (`time.process_time()` in
+`app.py::_start_run_record` and `app.py::_build_run_record`), so it excludes
+the time to send the request and receive the reply. The saved output is
+`results/cost_2026-11-11_2049.md`:
+
+```text
+Cost measurement, 2026-11-11T20:49:35-05:00
+Service: http://127.0.0.1:5000   model: gpt2   runs: 10
+
+Warm-up (not in the average): 40.9 ms elapsed, 58.3 ms CPU, cold_start=False
+
+| Run | Words | Status | Elapsed ms | CPU ms | Model ms | Client ms |
+|---|---|---|---|---|---|---|
+| 1 | 86 | 200 | 40.1 | 57.4 | 38.6 | 41.3 |
+| 2 | 51 | 200 | 29.8 | 40.7 | 28.4 | 30.9 |
+| 3 | 62 | 200 | 32.7 | 44.4 | 31.5 | 34.1 |
+| 4 | 48 | 200 | 29.3 | 40.1 | 28.1 | 30.7 |
+| 5 | 54 | 200 | 32.9 | 44.9 | 31.7 | 34.1 |
+| 6 | 58 | 200 | 47.9 | 57.8 | 46.5 | 49.0 |
+| 7 | 78 | 200 | 45.3 | 60.7 | 43.9 | 46.6 |
+| 8 | 54 | 200 | 32.9 | 43.5 | 31.5 | 34.2 |
+| 9 | 83 | 200 | 52.6 | 68.3 | 51.0 | 53.9 |
+| 10 | 42 | 200 | 32.0 | 42.8 | 30.7 | 33.6 |
+
+Successful runs averaged: 10 of 10
+Elapsed per run:  mean 37.5 ms   (min 29.3, max 52.6)
+CPU per run:      mean 50.1 ms   (min 40.1, max 68.3)
+gpt2 share:       mean 36.2 ms of the elapsed time (96%)
+```
+
+CPU time is higher than elapsed time because gpt2 runs on more than one core
+at once. gpt2 is 96% of the elapsed time, so the cost of a run is the cost of
+one gpt2 pass over the text.
+
+Two costs are not per run:
+
+- The first submission after a start loads the model. In the session log that
+  request took 2,031 ms elapsed and 1,431 ms of CPU, about 29 normal runs'
+  worth (1,431 / 50.1 = 28.6). It is paid once per start.
+- The loaded model holds about 1,000 MB of memory for as long as the service
+  is up, whether or not anyone submits anything.
+
+A hundred people a day, one submission each:
+
+```text
+100 runs x 50.1 ms CPU per run = 5,010 ms  = 5.0 seconds of CPU per day
+plus one cold start per day    = 1,431 ms  = 1.4 seconds
+total                          = 6,441 ms  = 6.4 seconds of CPU per day
+
+one core has 86,400 seconds in a day
+6.4 / 86,400 = 0.0000745 = 0.007% of one core
+```
+
+So at a hundred people a day the processor is idle for all but about six
+seconds, and the cost that decides where this can run is the 1,000 MB of
+memory held all day.
+
 ---
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
